@@ -1,5 +1,5 @@
 import { checkProposalCompliance, type AuditEvent, type MetricsDaily, type Proposal } from "@app/core";
-import type { DataSource } from "../data-source";
+import { AgentRunError, type DataSource } from "../data-source";
 import {
   approveProposalWrite,
   rejectProposalWrite,
@@ -7,6 +7,7 @@ import {
   type ProposalWriteContext,
   type ProposalWriteResult,
 } from "../proposal-writes";
+import { completeListingOptimizerRun, startListingOptimizerRun } from "./agent-runs";
 import { generateMockDataset, type MockDataset } from "./generate";
 
 export type MockDataSourceOptions = {
@@ -23,7 +24,15 @@ export function createMockDataSource(dataset: MockDataset, { now = () => new Dat
   const proposals = [...dataset.proposals];
   const listingVersions = [...dataset.listingVersions];
   const auditEvents = [...dataset.auditEvents];
+  const agentRuns = [...dataset.agentRuns];
+  const reviews = [...dataset.reviews];
   const nextAuditId = idSequence("aud", auditEvents);
+  const nextId = {
+    run: idSequence("run", agentRuns),
+    listingVersion: idSequence("lv", listingVersions),
+    review: idSequence("rev", reviews),
+    proposal: idSequence("prop", proposals),
+  };
 
   const byId = <T extends { id: string }>(items: readonly T[], id: string) => items.find((item) => item.id === id);
   const limited = <T>(items: T[], limit?: number) => (limit === undefined ? items : items.slice(0, limit));
@@ -51,13 +60,30 @@ export function createMockDataSource(dataset: MockDataset, { now = () => new Dat
     };
   };
 
+  const appendAudit = (events: Omit<AuditEvent, "id">[]) => {
+    // Newest first, like the generated feed.
+    for (const draft of events) auditEvents.unshift(deepFreeze<AuditEvent>({ id: nextAuditId(), ...draft }));
+  };
+
   const commit = ({ proposal, events }: ProposalWriteResult): Proposal => {
     const index = proposals.findIndex((candidate) => candidate.id === proposal.id);
     proposals[index] = deepFreeze(proposal);
-    // Newest first, like the generated feed.
-    for (const draft of events) auditEvents.unshift(deepFreeze<AuditEvent>({ id: nextAuditId(), ...draft }));
+    appendAudit(events);
     return proposal;
   };
+
+  /** What the agent-run writes read from and append to. */
+  const runStore = () => ({
+    members: dataset.members,
+    sellerAccounts: dataset.sellerAccounts,
+    products: dataset.products,
+    productFacts: dataset.productFacts,
+    listingVersions,
+    proposals,
+    agentRuns,
+    liveListing,
+    nextId,
+  });
 
   return {
     async listWorkspaces() {
@@ -101,10 +127,10 @@ export function createMockDataSource(dataset: MockDataset, { now = () => new Dat
         .sort((a, b) => b.version - a.version);
     },
     async listReviews(listingVersionId) {
-      return dataset.reviews.filter((review) => review.listingVersionId === listingVersionId);
+      return reviews.filter((review) => review.listingVersionId === listingVersionId);
     },
     async getReview(id) {
-      return byId(dataset.reviews, id);
+      return byId(reviews, id);
     },
 
     async listProposals({ workspaceId, sellerAccountId, status, type, snoozed }) {
@@ -127,7 +153,7 @@ export function createMockDataSource(dataset: MockDataset, { now = () => new Dat
     async rejectProposal({ proposalId, memberId, reason }) {
       const result = rejectProposalWrite(writeContext(proposalId, memberId), { reason });
       // The agent's draft behind a rejected listing update will never go live.
-      const review = result.proposal.reviewId ? byId(dataset.reviews, result.proposal.reviewId) : undefined;
+      const review = result.proposal.reviewId ? byId(reviews, result.proposal.reviewId) : undefined;
       const draftIndex = listingVersions.findIndex((version) => version.id === review?.listingVersionId);
       const draft = listingVersions[draftIndex];
       if (draft?.status === "proposed") listingVersions[draftIndex] = deepFreeze({ ...draft, status: "rejected" });
@@ -178,14 +204,41 @@ export function createMockDataSource(dataset: MockDataset, { now = () => new Dat
         .sort((a, b) => a.date.localeCompare(b.date));
     },
 
-    async listAgentRuns({ workspaceId, sellerAccountId, limit }) {
+    async listAgentRuns({ workspaceId, sellerAccountId, subjectId, limit }) {
       return limited(
-        dataset.agentRuns.filter(
+        agentRuns.filter(
           (run) =>
-            run.workspaceId === workspaceId && (sellerAccountId === undefined || run.sellerAccountId === sellerAccountId),
+            run.workspaceId === workspaceId &&
+            (sellerAccountId === undefined || run.sellerAccountId === sellerAccountId) &&
+            (subjectId === undefined || run.subject?.id === subjectId),
         ),
         limit,
       );
+    },
+    async getAgentRun(id) {
+      return byId(agentRuns, id);
+    },
+    async startListingOptimizer({ productId, memberId }) {
+      const { run, events } = startListingOptimizerRun(runStore(), { productId, memberId, at: now() });
+      agentRuns.unshift(deepFreeze(run));
+      appendAudit(events);
+      return run;
+    },
+    async completeAgentRun(runId) {
+      const run = byId(agentRuns, runId);
+      if (!run) throw new AgentRunError("not_found", "That agent run doesn't exist.");
+      if (run.status !== "running") {
+        const proposalId = run.proposalIds[0];
+        return { run, proposal: proposalId ? byId(proposals, proposalId) : undefined };
+      }
+
+      const result = completeListingOptimizerRun(runStore(), run, now().toISOString());
+      listingVersions.push(deepFreeze(result.version));
+      reviews.unshift(deepFreeze(result.review));
+      proposals.unshift(deepFreeze(result.proposal));
+      agentRuns[agentRuns.findIndex((candidate) => candidate.id === run.id)] = deepFreeze(result.run);
+      appendAudit(result.events);
+      return { run: result.run, proposal: result.proposal };
     },
     async listAuditEvents({ workspaceId, sellerAccountId, limit }) {
       return limited(
@@ -200,13 +253,19 @@ export function createMockDataSource(dataset: MockDataset, { now = () => new Dat
   };
 }
 
-// Kept on globalThis so dev-server module reloads don't throw away writes made so far.
-const globalStore = globalThis as typeof globalThis & { __mockDataSource?: DataSource };
+// Kept on globalThis so dev-server reloads of other modules don't throw away writes made so far.
+// Tagged with the factory that built it: when this module itself reloads (its code changed), the
+// factory is new and the source is rebuilt, so the dev server never serves an outdated implementation.
+const globalStore = globalThis as typeof globalThis & {
+  __mockDataSource?: { source: DataSource; factory: typeof createMockDataSource };
+};
 
 /** Phase 1 data source over the default seeded dataset, generated on first use. */
 export function getMockDataSource(): DataSource {
-  globalStore.__mockDataSource ??= createMockDataSource(generateMockDataset());
-  return globalStore.__mockDataSource;
+  if (globalStore.__mockDataSource?.factory !== createMockDataSource) {
+    globalStore.__mockDataSource = { source: createMockDataSource(generateMockDataset()), factory: createMockDataSource };
+  }
+  return globalStore.__mockDataSource.source;
 }
 
 /** Continues `prefix_0001`-style ids after the highest one already used. */

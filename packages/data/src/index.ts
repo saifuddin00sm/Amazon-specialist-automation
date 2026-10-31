@@ -1,8 +1,11 @@
 import type { DataSource } from "./data-source";
 import { getMockDataSource } from "./mock/mock-data-source";
 
+export { AgentRunError } from "./data-source";
 export type {
   ActivityQuery,
+  AgentRunErrorCode,
+  AgentRunQuery,
   ApproveProposalInput,
   DataSource,
   DateRange,
@@ -11,6 +14,7 @@ export type {
   ProposalQuery,
   RejectProposalInput,
   SnoozeProposalInput,
+  StartListingOptimizerInput,
 } from "./data-source";
 export {
   MOCK_ANCHOR_DATE,

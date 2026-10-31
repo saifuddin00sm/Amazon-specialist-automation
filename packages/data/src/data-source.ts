@@ -64,6 +64,26 @@ export type ActivityQuery = {
   limit?: number;
 };
 
+export type AgentRunQuery = ActivityQuery & {
+  /** Only runs that worked on this entity, e.g. one product. */
+  subjectId?: string;
+};
+
+export type StartListingOptimizerInput = { productId: string; memberId: string };
+
+export type AgentRunErrorCode = "not_found" | "forbidden" | "conflict";
+
+/** An agent run the data source refused to start or complete. `message` is safe to show. */
+export class AgentRunError extends Error {
+  constructor(
+    readonly code: AgentRunErrorCode,
+    message: string,
+  ) {
+    super(message);
+    this.name = "AgentRunError";
+  }
+}
+
 /** The only way the UI reads or writes data. Implementations: mock (Phase 1), Supabase/Amazon (later). */
 export interface DataSource {
   listWorkspaces(): Promise<Workspace[]>;
@@ -109,7 +129,19 @@ export interface DataSource {
   ): Promise<Extract<MetricsDaily, { entityType: T }>[]>;
 
   /** Newest first. */
-  listAgentRuns(query: ActivityQuery): Promise<AgentRun[]>;
+  listAgentRuns(query: AgentRunQuery): Promise<AgentRun[]>;
+  getAgentRun(id: string): Promise<AgentRun | undefined>;
+  /**
+   * Starts the listing optimizer on a product as `memberId`. Returns the running AgentRun with its
+   * planned steps. Throws AgentRunError when the product already has a run in flight or a listing
+   * proposal waiting for approval.
+   */
+  startListingOptimizer(input: StartListingOptimizerInput): Promise<AgentRun>;
+  /**
+   * Finishes a running agent run and files its output: for the listing optimizer, a proposed
+   * ListingVersion, its Review and a pending Proposal. Calling it on a finished run returns it as is.
+   */
+  completeAgentRun(runId: string): Promise<{ run: AgentRun; proposal?: Proposal }>;
   /** Newest first. */
   listAuditEvents(query: ActivityQuery): Promise<AuditEvent[]>;
 }
