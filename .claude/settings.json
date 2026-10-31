@@ -1,0 +1,8 @@
+  {
+    "permissions": {
+      "allow": [
+        "Read(~/AppData/Local/Temp/claude/**)"
+      ]
+    }
+  }
+  
