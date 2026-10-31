@@ -10,6 +10,7 @@ import {
 } from "@app/core";
 import { cn } from "cn";
 import { AlarmClock, CheckCheck, ChevronDown, Inbox, Loader2, X } from "lucide-react";
+import { useSearchParams } from "next/navigation";
 import { useEffect, useEffectEvent, useOptimistic, useRef, useState, useSyncExternalStore, useTransition } from "react";
 import { toast } from "sonner";
 import {
@@ -50,10 +51,14 @@ export function ApprovalsWorkbench({ data }: { data: ApprovalsData }) {
     current.filter((item) => !ids.includes(item.proposal.id)),
   );
   const [saving, startTransition] = useTransition();
-  const [view, setView] = useState<View>("queue");
+  // `?proposal=` (e.g. from an agent run) opens that proposal first.
+  const linkedId = useSearchParams().get("proposal") ?? undefined;
+  const [view, setView] = useState<View>(() =>
+    data.items.find((item) => item.proposal.id === linkedId)?.snoozed ? "snoozed" : "queue",
+  );
   const [filters, setFilters] = useState<Filters>(NO_FILTERS);
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
-  const [activeId, setActiveId] = useState<string>();
+  const [activeId, setActiveId] = useState<string | undefined>(linkedId);
   const [modeFor, setModeFor] = useState<{ id: string; mode: DetailMode }>();
   const [bulkRejectOpen, setBulkRejectOpen] = useState(false);
   const detailRef = useRef<HTMLDivElement>(null);
