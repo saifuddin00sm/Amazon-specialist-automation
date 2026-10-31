@@ -1,20 +1,49 @@
 import { z } from "zod";
+import { AutonomyLevelSchema } from "./autonomy";
+import { CurrencySchema, IdSchema, IsoDateTimeSchema, MarketplaceSchema } from "./common";
 
-/** A workspace groups one or more Amazon seller accounts under one team. */
+/** A merchant runs its own seller accounts; an agency runs its clients' accounts. */
+export const WorkspaceKindSchema = z.enum(["merchant", "agency"]);
+export type WorkspaceKind = z.infer<typeof WorkspaceKindSchema>;
+
 export const WorkspaceSchema = z.object({
-  id: z.string().min(1),
+  id: IdSchema,
   name: z.string().min(1),
+  kind: WorkspaceKindSchema,
+  createdAt: IsoDateTimeSchema,
 });
 export type Workspace = z.infer<typeof WorkspaceSchema>;
 
-export const MarketplaceSchema = z.enum(["US", "CA", "MX", "UK", "DE", "FR", "IT", "ES", "JP"]);
-export type Marketplace = z.infer<typeof MarketplaceSchema>;
+export const MemberRoleSchema = z.enum(["owner", "specialist", "client_approver", "viewer"]);
+export type MemberRole = z.infer<typeof MemberRoleSchema>;
+
+export const MemberSchema = z
+  .object({
+    id: IdSchema,
+    workspaceId: IdSchema,
+    name: z.string().min(1),
+    email: z.email(),
+    role: MemberRoleSchema,
+    /** Accounts this member is limited to. Empty means every account in the workspace. */
+    sellerAccountIds: z.array(IdSchema),
+    createdAt: IsoDateTimeSchema,
+  })
+  .refine((member) => member.role !== "client_approver" || member.sellerAccountIds.length > 0, {
+    message: "A client_approver must be scoped to at least one seller account",
+    path: ["sellerAccountIds"],
+  });
+export type Member = z.infer<typeof MemberSchema>;
 
 /** An Amazon Seller Central account connected to a workspace. */
 export const SellerAccountSchema = z.object({
-  id: z.string().min(1),
-  workspaceId: z.string().min(1),
+  id: IdSchema,
+  workspaceId: IdSchema,
   name: z.string().min(1),
+  /** Amazon merchant token. */
+  sellerId: z.string().regex(/^A[0-9A-Z]{12,13}$/),
   marketplace: MarketplaceSchema,
+  currency: CurrencySchema,
+  autonomyLevel: AutonomyLevelSchema,
+  connectedAt: IsoDateTimeSchema,
 });
 export type SellerAccount = z.infer<typeof SellerAccountSchema>;
