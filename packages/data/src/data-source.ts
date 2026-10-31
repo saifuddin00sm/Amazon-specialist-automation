@@ -3,6 +3,7 @@ import type {
   AgentRun,
   AuditEvent,
   Campaign,
+  DiffEdit,
   ListingVersion,
   Member,
   MetricsDaily,
@@ -33,7 +34,22 @@ export type ProposalQuery = {
   sellerAccountId?: string;
   status?: ProposalStatus;
   type?: ProposalType;
+  /** true: only proposals snoozed into the future; false: leave those out. Omit for both. */
+  snoozed?: boolean;
 };
+
+/** Every write names the member making it; the data source checks they may. */
+type ProposalWrite = { proposalId: string; memberId: string };
+
+export type ApproveProposalInput = ProposalWrite & {
+  note?: string;
+  /** Approve with edits: replacement `after` values. The agent's diff is kept as `originalDiff`. */
+  edits?: DiffEdit[];
+};
+
+export type RejectProposalInput = ProposalWrite & { reason: string };
+
+export type SnoozeProposalInput = ProposalWrite & { until: string };
 
 export type MetricsQuery<T extends MetricsEntityType> = {
   sellerAccountId: string;
@@ -53,6 +69,8 @@ export interface DataSource {
   listWorkspaces(): Promise<Workspace[]>;
   getWorkspace(id: string): Promise<Workspace | undefined>;
   listMembers(workspaceId: string): Promise<Member[]>;
+  /** The member acting in this workspace. Phase 1 has no sign-in, so it is the workspace owner. */
+  getActingMember(workspaceId: string): Promise<Member | undefined>;
   listSellerAccounts(workspaceId?: string): Promise<SellerAccount[]>;
   getSellerAccount(id: string): Promise<SellerAccount | undefined>;
 
@@ -69,9 +87,22 @@ export interface DataSource {
   listProposals(query: ProposalQuery): Promise<Proposal[]>;
   getProposal(id: string): Promise<Proposal | undefined>;
 
+  /**
+   * Approves a pending proposal (it is applied to Amazon later, never here). Writes proposal.approved,
+   * plus proposal.edited first when there are edits. Throws ProposalWriteError when refused.
+   */
+  approveProposal(input: ApproveProposalInput): Promise<Proposal>;
+  /** Rejects a pending proposal with a required reason. Writes proposal.rejected. */
+  rejectProposal(input: RejectProposalInput): Promise<Proposal>;
+  /** Hides a pending proposal from the queue until `until`. Writes proposal.snoozed. */
+  snoozeProposal(input: SnoozeProposalInput): Promise<Proposal>;
+
   listCampaigns(sellerAccountId: string): Promise<Campaign[]>;
+  getCampaign(id: string): Promise<Campaign | undefined>;
   listAdGroups(campaignId: string): Promise<AdGroup[]>;
+  getAdGroup(id: string): Promise<AdGroup | undefined>;
   listTargets(adGroupId: string): Promise<Target[]>;
+  getTarget(id: string): Promise<Target | undefined>;
   /** Oldest day first. */
   listMetricsDaily<T extends MetricsEntityType>(
     query: MetricsQuery<T>,

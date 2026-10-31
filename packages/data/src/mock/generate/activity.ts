@@ -1,4 +1,5 @@
 import {
+  FRESHNESS_MAX_AGE_HOURS,
   overallScore,
   type Actor,
   type AdMetricsDaily,
@@ -6,7 +7,9 @@ import {
   type AgentRun,
   type AuditEvent,
   type Currency,
+  type DataFreshness,
   type DiffEntry,
+  type FreshnessSource,
   type ListingVersion,
   type Member,
   type MetricsDaily,
@@ -19,7 +22,7 @@ import {
   type Target,
   type Workspace,
 } from "@app/core";
-import { DAY_MS, MINUTE_MS, round2, type GeneratorContext } from "../context";
+import { DAY_MS, HOUR_MS, MINUTE_MS, round2, type GeneratorContext } from "../context";
 import { NEGATIVE_MODIFIERS, REJECTION_NOTES, RUN_ERRORS, keywordIdeas } from "../vocabulary";
 import type { Advertising } from "./advertising";
 import { agentListing, type Catalog } from "./catalog";
@@ -35,7 +38,7 @@ export type Activity = {
 
 /** ACoS the bid optimizer steers toward. */
 const TARGET_ACOS = 0.3;
-const PENDING_WINDOW_DAYS = 3;
+const PENDING_WINDOW_DAYS = 6;
 const RUN_CADENCE_DAYS = { listing_writer: 7, bid_optimizer: 3, keyword_harvester: 7, budget_pacer: 7 } as const;
 const CURRENCY_SYMBOL: Record<Currency, string> = { USD: "$", CAD: "CA$", MXN: "MX$", GBP: "£", EUR: "€", JPY: "¥" };
 
@@ -147,11 +150,20 @@ export function generateActivity(
     };
   };
 
+  /** When an input the run read was last refreshed. About one in ten is past its freshness limit. */
+  const inputAsOf = (run: AgentRun, source: FreshnessSource): DataFreshness => {
+    const limit = FRESHNESS_MAX_AGE_HOURS[source];
+    const hours = rng.chance(0.1) ? rng.int(Math.ceil(limit * 1.2), limit * 2) : rng.int(1, Math.floor(limit * 0.6));
+    return { source, asOf: clock.iso(Date.parse(run.startedAt) - hours * HOUR_MS) };
+  };
+
   const addProposal = (
     run: AgentRun,
     account: SellerAccount,
     createdMs: number,
-    fields: Pick<Proposal, "type" | "risk" | "title" | "rationale" | "target" | "diff" | "scores"> & { reviewId?: string },
+    fields: Pick<Proposal, "type" | "risk" | "title" | "rationale" | "target" | "diff" | "scores" | "freshness"> & {
+      reviewId?: string;
+    },
   ) => {
     const proposal: Proposal = {
       id: nextId("prop"),
@@ -294,6 +306,10 @@ export function generateActivity(
         target: { type: "product", id: product.id },
         diff,
         scores: { confidence: issue === "none" ? rng.int(70, 95) : rng.int(45, 70), impact: rng.int(30, 80), rubric: review.overall },
+        freshness: [
+          inputAsOf(writerRun, "live_listing"),
+          { source: "product_facts", asOf: facts.updatedAt < writerRun.startedAt ? facts.updatedAt : writerRun.startedAt },
+        ],
         reviewId: review.id,
       });
       proposalVersion.set(proposal.id, draft);
@@ -339,6 +355,7 @@ export function generateActivity(
         target: { type: "target", id: target.id },
         diff: [{ path: "bid", before: target.bid, after }],
         scores: { confidence: rng.int(55, 92), impact: rng.int(20, 70) },
+        freshness: [inputAsOf(run, "ad_metrics")],
       });
       if (proposal.status === "applied") target.bid = after;
     }
@@ -354,6 +371,7 @@ export function generateActivity(
         target: { type: "target", id: target.id },
         diff: [{ path: "state", before: "enabled", after: "paused" }],
         scores: { confidence: rng.int(70, 95), impact: rng.int(15, 45) },
+        freshness: [inputAsOf(run, "ad_metrics")],
       });
       if (proposal.status === "applied") target.state = "paused";
     }
@@ -388,6 +406,7 @@ export function generateActivity(
             target: { type: "ad_group", id: manualGroup.id },
             diff: [{ path: "keywords", before: null, after: { keyword, matchType: "exact", bid } }],
             scores: { confidence: rng.int(60, 90), impact: rng.int(25, 65) },
+            freshness: [inputAsOf(harvestRun, "search_terms")],
           });
           if (proposal.status === "applied") {
             ads.targets.push({ id: nextId("tgt"), adGroupId: manualGroup.id, state: "enabled", negative: false, bid, kind: "keyword", keyword, matchType: "exact" });
@@ -408,6 +427,7 @@ export function generateActivity(
             target: { type: "ad_group", id: autoGroup.id },
             diff: [{ path: "negativeKeywords", before: [...negatives], after: [...negatives, term] }],
             scores: { confidence: rng.int(70, 95), impact: rng.int(10, 40) },
+            freshness: [inputAsOf(negateRun, "search_terms")],
           });
           if (proposal.status === "applied") {
             ads.targets.push({ id: nextId("tgt"), adGroupId: autoGroup.id, state: "enabled", negative: true, kind: "keyword", keyword: term, matchType: "exact" });
@@ -435,6 +455,7 @@ export function generateActivity(
         target: { type: "campaign", id: campaign.id },
         diff: [{ path: "dailyBudget", before, after }],
         scores: { confidence: rng.int(60, 90), impact: rng.int(30, 75) },
+        freshness: [inputAsOf(run, "ad_metrics")],
       });
       if (proposal.status === "applied") campaign.dailyBudget = after;
     }

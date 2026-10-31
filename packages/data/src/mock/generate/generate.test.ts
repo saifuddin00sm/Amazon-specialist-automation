@@ -10,6 +10,7 @@ import {
   ProductSchema,
   ProposalSchema,
   ReviewSchema,
+  isStale,
   SellerAccountSchema,
   TargetSchema,
   WorkspaceSchema,
@@ -360,5 +361,15 @@ describe("business rules", () => {
       dataset.auditEvents.filter((event) => event.action === "proposal.created").map((event) => event.entity.id),
     );
     expect(dataset.proposals.every((proposal) => created.has(proposal.id))).toBe(true);
+  });
+
+  it("records data freshness that predates each proposal and is mostly fresh", () => {
+    const entries = dataset.proposals.flatMap((proposal) => proposal.freshness.map((entry) => ({ entry, at: proposal.createdAt })));
+    expect(entries.every(({ entry, at }) => entry.asOf <= at)).toBe(true);
+    const stale = entries.filter(({ entry, at }) => isStale(entry, at)).length;
+    expect(stale).toBeGreaterThan(0);
+    expect(stale / entries.length).toBeLessThan(0.25);
+    const listing = dataset.proposals.filter((proposal) => proposal.type === "listing_update");
+    expect(listing.every((proposal) => proposal.freshness.some((entry) => entry.source === "product_facts"))).toBe(true);
   });
 });

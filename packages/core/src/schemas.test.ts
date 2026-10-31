@@ -96,6 +96,7 @@ describe("ProposalSchema", () => {
     target: { type: "target", id: "tgt_1" },
     diff: [{ path: "bid", before: 1.2, after: 0.95 }],
     scores: { confidence: 80, impact: 40 },
+    freshness: [{ source: "ad_metrics", asOf: "2026-10-30T02:00:00.000Z" }],
     createdBy: { type: "agent", agent: "bid_optimizer", agentRunId: "run_1" },
     createdAt: at,
   };
@@ -120,6 +121,19 @@ describe("ProposalSchema", () => {
 
   it("requires at least one diff entry", () => {
     expect(ProposalSchema.safeParse({ ...pending, diff: [] }).success).toBe(false);
+  });
+
+  it("only lets pending proposals be snoozed", () => {
+    const decided = { ...pending, decidedBy: { type: "member" as const, memberId: "mem_1" }, decidedAt: at };
+    expect(ProposalSchema.safeParse({ ...pending, snoozedUntil: at }).success).toBe(true);
+    expect(ProposalSchema.safeParse({ ...decided, status: "approved", snoozedUntil: at }).success).toBe(false);
+  });
+
+  it("requires a reason when a member rejects", () => {
+    const rejected = { ...pending, status: "rejected" as const, decidedBy: { type: "member" as const, memberId: "mem_1" }, decidedAt: at };
+    expect(ProposalSchema.safeParse(rejected).success).toBe(false);
+    expect(ProposalSchema.safeParse({ ...rejected, decisionNote: "  " }).success).toBe(false);
+    expect(ProposalSchema.safeParse({ ...rejected, decisionNote: "Off brand." }).success).toBe(true);
   });
 });
 

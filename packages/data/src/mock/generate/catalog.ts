@@ -94,7 +94,8 @@ export function generateCatalog(ctx: GeneratorContext, plans: AccountPlan[], mem
           features: profile.features.map(([, sentence]) => sentence),
           prohibitedClaims: rng.pickMany(vocabulary.prohibitedClaims, 1, 3),
           targetKeywords: profile.keywords,
-          updatedAt: clock.iso(createdMs + rng.int(1, 60) * DAY_MS),
+          // Facts get re-verified now and then, so most are a few months old at most.
+          updatedAt: clock.iso(Math.max(createdMs + rng.int(1, 60) * DAY_MS, clock.daysAgo(rng.int(3, 200)))),
         });
 
         // v1 from launch; some products got a human rewrite later.

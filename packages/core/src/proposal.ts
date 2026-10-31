@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { ActorSchema, EntityRefSchema, IdSchema, IsoDateTimeSchema } from "./common";
+import { DataFreshnessSchema } from "./freshness";
 
 export const ProposalTypeSchema = z.enum([
   "listing_update",
@@ -36,6 +37,10 @@ export const DiffEntrySchema = z.object({
 });
 export type DiffEntry = z.infer<typeof DiffEntrySchema>;
 
+/** A member's replacement for the `after` value at one diff path. */
+export const DiffEditSchema = DiffEntrySchema.pick({ path: true, after: true });
+export type DiffEdit = z.infer<typeof DiffEditSchema>;
+
 export const ProposalScoresSchema = z.object({
   /** How sure the agent is the change is right, 0–100. */
   confidence: z.number().int().min(0).max(100),
@@ -59,10 +64,16 @@ export const ProposalSchema = z
     rationale: z.string().min(1),
     target: EntityRefSchema,
     diff: z.array(DiffEntrySchema).min(1),
+    /** The agent's diff, kept when a member edited `diff` before approving. */
+    originalDiff: z.array(DiffEntrySchema).min(1).optional(),
     scores: ProposalScoresSchema,
+    /** How current each input the agent used was. */
+    freshness: z.array(DataFreshnessSchema).min(1),
     reviewId: IdSchema.optional(),
     createdBy: ActorSchema,
     createdAt: IsoDateTimeSchema,
+    /** Hidden from the approval queue until then. Only pending proposals can be snoozed. */
+    snoozedUntil: IsoDateTimeSchema.optional(),
     /** A member, or the system when autonomy (L2+) auto-approved it within guardrails. */
     decidedBy: ActorSchema.optional(),
     decidedAt: IsoDateTimeSchema.optional(),
@@ -83,5 +94,55 @@ export const ProposalSchema = z
     if (proposal.status !== "applied" && proposal.appliedAt) {
       ctx.addIssue({ code: "custom", message: "Only applied proposals have appliedAt", path: ["appliedAt"] });
     }
+    if (proposal.status !== "pending_approval" && proposal.snoozedUntil) {
+      ctx.addIssue({ code: "custom", message: "Only pending proposals can be snoozed", path: ["snoozedUntil"] });
+    }
+    if (proposal.status === "rejected" && proposal.decidedBy?.type === "member" && !proposal.decisionNote?.trim()) {
+      ctx.addIssue({ code: "custom", message: "A member rejection needs a reason", path: ["decisionNote"] });
+    }
   });
 export type Proposal = z.infer<typeof ProposalSchema>;
+
+/** Longest decision note or rejection reason a member can write. */
+export const DECISION_NOTE_MAX_LENGTH = 500;
+
+/** Proposal types whose `after` values a member may change before approving. */
+export const EDITABLE_PROPOSAL_TYPES: ReadonlySet<ProposalType> = new Set([
+  "listing_update",
+  "price_change",
+  "bid_change",
+  "budget_change",
+  "keyword_add",
+  "keyword_negate",
+]);
+
+/**
+ * Replaces `after` values in a diff. Every edit must name a path already in the diff and keep the
+ * value's shape (string stays string, array stays array, ...). Returns an error message otherwise.
+ */
+export function applyDiffEdits(diff: DiffEntry[], edits: DiffEdit[]): { diff: DiffEntry[] } | { error: string } {
+  const byPath = new Map(edits.map((edit) => [edit.path, edit.after]));
+  if (byPath.size !== edits.length) return { error: "Each path can only be edited once." };
+  for (const path of byPath.keys()) {
+    if (!diff.some((entry) => entry.path === path)) return { error: `"${path}" is not part of this proposal.` };
+  }
+  const next: DiffEntry[] = [];
+  for (const entry of diff) {
+    if (!byPath.has(entry.path)) {
+      next.push(entry);
+      continue;
+    }
+    const after = byPath.get(entry.path) ?? null;
+    if (jsonShape(after) !== jsonShape(entry.after)) {
+      return { error: `"${entry.path}" must stay a ${jsonShape(entry.after)}.` };
+    }
+    next.push({ ...entry, after });
+  }
+  return { diff: next };
+}
+
+function jsonShape(value: unknown): string {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "list";
+  return typeof value === "object" ? "object" : typeof value;
+}
