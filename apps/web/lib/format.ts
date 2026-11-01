@@ -24,6 +24,23 @@ export function formatMoney(amount: number, currency: Currency): string {
   return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(amount);
 }
 
+/** Axis-sized amounts: $1.2K, $35K. */
+export function formatMoneyCompact(amount: number, currency: Currency): string {
+  return new Intl.NumberFormat("en-US", { style: "currency", currency, notation: "compact", maximumFractionDigits: 1 }).format(amount);
+}
+
+/** A fraction as a percentage: 0.284 → "28.4%". */
+export function formatPercent(fraction: number, fractionDigits = 1): string {
+  return `${(fraction * 100).toFixed(fractionDigits)}%`;
+}
+
+const day = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+
+/** A calendar day (YYYY-MM-DD): "Oct 30". */
+export function formatDay(isoDate: string): string {
+  return day.format(new Date(`${isoDate}T00:00:00.000Z`));
+}
+
 export function formatPercentChange(before: number, after: number): string {
   if (before === 0) return "new";
   const change = Math.round(((after - before) / before) * 100);
