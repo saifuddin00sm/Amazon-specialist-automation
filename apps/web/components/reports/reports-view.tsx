@@ -41,7 +41,7 @@ export function ReportsView({ reports }: { reports: Record<string, AccountReport
           </SelectContent>
         </Select>
         <Button asChild variant="ghost" size="sm">
-          <Link href="/settings">
+          <Link href="/settings/branding">
             <Palette />
             Branding
           </Link>

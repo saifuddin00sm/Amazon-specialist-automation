@@ -29,7 +29,7 @@ test("one click opens the report on its own and the print dialog", async ({ page
 });
 
 test("branding saved in settings heads the report", async ({ page }) => {
-  await page.goto("/settings");
+  await page.goto("/settings/branding");
   const header = page.getByTestId("report-header");
   // Retried: typing before hydration would be lost.
   await expect(async () => {

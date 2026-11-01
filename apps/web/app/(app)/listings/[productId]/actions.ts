@@ -4,8 +4,9 @@ import { AgentRunError } from "@app/data";
 import { refresh } from "next/cache";
 import { z } from "zod";
 import { getDataSource } from "@/lib/data";
+import { runOutcome, type RunOutcome } from "@/lib/runs";
 
-export type RunActionResult = { ok: true; runId: string; proposalId?: string } | { ok: false; message: string };
+export type RunActionResult = { ok: true; runId: string; proposalId?: string; outcome?: RunOutcome } | { ok: false; message: string };
 
 const StartInput = z.object({ productId: z.string().min(1) });
 const CompleteInput = z.object({ runId: z.string().min(1) });
@@ -37,7 +38,7 @@ export async function completeOptimizerRun(input: z.input<typeof CompleteInput>)
 
   return runWrite(async () => {
     const { run, proposal } = await (await getDataSource()).completeAgentRun(parsed.data.runId);
-    return { ok: true, runId: run.id, proposalId: proposal?.id };
+    return { ok: true, runId: run.id, proposalId: proposal?.id, outcome: runOutcome(run, proposal) };
   });
 }
 

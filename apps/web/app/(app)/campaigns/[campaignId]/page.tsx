@@ -1,4 +1,5 @@
 import { canActOnAccount, type AdMetricsDaily, type Target } from "@app/core";
+import { AGENTS_PAUSED_MESSAGE } from "@app/data";
 import { ArrowLeft } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
@@ -42,13 +43,14 @@ async function CampaignView({ params }: { params: PageProps<"/campaigns/[campaig
   const account = campaign && (await dataSource.getSellerAccount(campaign.sellerAccountId));
   if (!campaign || !account) notFound();
 
-  const [adGroups, available, products, runs, pending, member] = await Promise.all([
+  const [adGroups, available, products, runs, pending, member, workspace] = await Promise.all([
     dataSource.listAdGroups(campaign.id),
     dataSource.getMetricsDateRange(account.id),
     dataSource.listProducts({ sellerAccountId: account.id }),
     dataSource.listAgentRuns({ workspaceId: account.workspaceId, subjectId: campaign.id, limit: 1 }),
     dataSource.listProposals({ workspaceId: account.workspaceId, status: "pending_approval", type: "campaign_plan" }),
     dataSource.getActingMember(account.workspaceId),
+    dataSource.getWorkspace(account.workspaceId),
   ]);
   const targetsByGroup = await Promise.all(adGroups.map((adGroup) => dataSource.listTargets(adGroup.id)));
   const targets: Target[] = targetsByGroup.flat();
@@ -132,7 +134,9 @@ async function CampaignView({ params }: { params: PageProps<"/campaigns/[campaig
           latestRun={runs[0]}
           pendingPlanId={plan?.id}
           blockedReason={
-            !canRun
+            workspace?.agentsPausedAt
+              ? AGENTS_PAUSED_MESSAGE
+              : !canRun
               ? "You can't run agents on this account."
               : campaign.state !== "enabled"
                 ? "Only enabled campaigns can be optimized."

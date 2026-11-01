@@ -73,9 +73,15 @@ export function ProposalDetail({
   const draftChecks = useMemo(
     () =>
       editing
-        ? checkProposalCompliance({ type: proposal.type, diff: draft, liveListing: item.liveListing, facts: item.facts })
+        ? checkProposalCompliance({
+            type: proposal.type,
+            diff: draft,
+            liveListing: item.liveListing,
+            facts: item.facts,
+            guardrails: item.account.guardrails,
+          })
         : item.compliance,
-    [editing, draft, proposal.type, item.liveListing, item.facts, item.compliance],
+    [editing, draft, proposal.type, item.liveListing, item.facts, item.compliance, item.account.guardrails],
   );
   const blocked = hasBlockingFailure(draftChecks);
   const edits: DiffEdit[] = draft.flatMap((entry, i) =>

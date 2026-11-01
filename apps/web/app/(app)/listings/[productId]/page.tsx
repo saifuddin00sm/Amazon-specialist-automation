@@ -37,12 +37,13 @@ async function ProductView({ params }: { params: PageProps<"/listings/[productId
   const account = product && (await dataSource.getSellerAccount(product.sellerAccountId));
   if (!product || !account) notFound();
 
-  const [facts, versions, runs, pending, member] = await Promise.all([
+  const [facts, versions, runs, pending, member, workspace] = await Promise.all([
     dataSource.getProductFacts(product.id),
     dataSource.listListingVersions(product.id),
     dataSource.listAgentRuns({ workspaceId: account.workspaceId, subjectId: product.id, limit: 1 }),
     dataSource.listProposals({ workspaceId: account.workspaceId, status: "pending_approval", type: "listing_update" }),
     dataSource.getActingMember(account.workspaceId),
+    dataSource.getWorkspace(account.workspaceId),
   ]);
   const live = versions.find((version) => version.status === "live");
   const pendingProposal = pending.find((proposal) => proposal.target.id === product.id);
@@ -71,6 +72,7 @@ async function ProductView({ params }: { params: PageProps<"/listings/[productId
           productId={product.id}
           latestRun={runs[0]}
           pendingProposalId={pendingProposal?.id}
+          agentsPaused={workspace?.agentsPausedAt !== undefined}
           canRun={Boolean(
             member && live && canActOnAccount(member, { workspaceId: account.workspaceId, sellerAccountId: account.id }),
           )}

@@ -1,7 +1,10 @@
 "use client";
 
-import type { SellerAccount, Workspace } from "@app/core";
+import type { MemberRole, SellerAccount, Workspace } from "@app/core";
 import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
+
+/** The member acting in a workspace. */
+export type ActingMember = { id: string; name: string; role: MemberRole };
 
 type SellerContextValue = {
   workspaces: Workspace[];
@@ -9,6 +12,8 @@ type SellerContextValue = {
   sellerAccounts: SellerAccount[];
   workspace: Workspace | undefined;
   sellerAccount: SellerAccount | undefined;
+  /** Who you are in the active workspace; decides which settings you can change. */
+  member: ActingMember | undefined;
   selectWorkspace: (workspaceId: string) => void;
   selectSellerAccount: (sellerAccountId: string) => void;
 };
@@ -22,10 +27,13 @@ function firstAccountIn(accounts: SellerAccount[], workspaceId: string | undefin
 export function SellerContextProvider({
   workspaces,
   sellerAccounts: allSellerAccounts,
+  members = {},
   children,
 }: {
   workspaces: Workspace[];
   sellerAccounts: SellerAccount[];
+  /** The acting member per workspace id. */
+  members?: Record<string, ActingMember>;
   children: ReactNode;
 }) {
   const [workspaceId, setWorkspaceId] = useState(workspaces[0]?.id);
@@ -39,14 +47,16 @@ export function SellerContextProvider({
       workspaces,
       sellerAccounts,
       workspace: workspaces.find((workspace) => workspace.id === workspaceId),
-      sellerAccount: sellerAccounts.find((account) => account.id === sellerAccountId),
+      // A new account (just connected) isn't selected yet; fall back to the workspace's first.
+      sellerAccount: sellerAccounts.find((account) => account.id === sellerAccountId) ?? sellerAccounts[0],
+      member: workspaceId ? members[workspaceId] : undefined,
       selectWorkspace: (nextWorkspaceId) => {
         setWorkspaceId(nextWorkspaceId);
         setSellerAccountId(firstAccountIn(allSellerAccounts, nextWorkspaceId));
       },
       selectSellerAccount: setSellerAccountId,
     };
-  }, [workspaces, allSellerAccounts, workspaceId, sellerAccountId]);
+  }, [workspaces, allSellerAccounts, members, workspaceId, sellerAccountId]);
 
   return <SellerContext value={value}>{children}</SellerContext>;
 }

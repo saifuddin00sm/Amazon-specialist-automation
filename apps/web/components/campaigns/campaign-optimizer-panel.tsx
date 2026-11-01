@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useTransition } from "react";
 import { toast } from "sonner";
 import { completeCampaignOptimizerRun, startCampaignOptimizer } from "@/app/(app)/campaigns/[campaignId]/actions";
+import { announceRunOutcome } from "@/components/agents/announce-run";
 import { AgentRunViewer } from "@/components/agents/agent-run-viewer";
 import { Button } from "@/components/ui/button";
 
@@ -45,14 +46,7 @@ export function CampaignOptimizerPanel({
         toast.error(result.message);
         return;
       }
-      const { proposalId } = result;
-      if (proposalId) {
-        toast.success("Campaign plan added to the approval inbox", {
-          action: { label: "Review", onClick: () => router.push(`/approvals?proposal=${proposalId}`) },
-        });
-      } else {
-        toast.info("No changes to propose. The campaign is on target.");
-      }
+      announceRunOutcome(result, { what: "Campaign plan", open: (href) => router.push(href) });
     });
   }, [latestRunId, router]);
 

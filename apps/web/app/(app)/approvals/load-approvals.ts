@@ -1,5 +1,7 @@
 import {
   checkProposalCompliance,
+  guardrailsFor,
+  type Guardrails,
   type ComplianceCheck,
   type ListingCopy,
   type MemberRole,
@@ -16,7 +18,10 @@ import { CAMPAIGN_TYPE_LABELS, targetLabel } from "@/lib/format";
 /** Everything the approvals UI needs to show and decide one proposal. */
 export type ApprovalItem = {
   proposal: Proposal;
-  account: Pick<SellerAccount, "id" | "name" | "marketplace" | "currency" | "autonomyLevel">;
+  account: Pick<SellerAccount, "id" | "name" | "marketplace" | "currency" | "autonomyLevel"> & {
+    /** The account's caps, which the live compliance check needs too. */
+    guardrails: Guardrails;
+  };
   /** What the proposal changes, in words: a product, a keyword, a campaign. */
   subject: { label: string; detail?: string };
   review?: Review;
@@ -86,6 +91,7 @@ async function toItem(
       marketplace: account.marketplace,
       currency: account.currency,
       autonomyLevel: account.autonomyLevel,
+      guardrails: guardrailsFor(account),
     },
     ...context,
     compliance: checkProposalCompliance({
@@ -93,6 +99,7 @@ async function toItem(
       diff: proposal.diff,
       liveListing: context.liveListing,
       facts: context.facts,
+      guardrails: guardrailsFor(account),
     }),
     snoozed,
   };

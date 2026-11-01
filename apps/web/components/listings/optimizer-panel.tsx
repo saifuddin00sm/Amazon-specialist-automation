@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useTransition } from "react";
 import { toast } from "sonner";
 import { completeOptimizerRun, startListingOptimizer } from "@/app/(app)/listings/[productId]/actions";
+import { announceRunOutcome } from "@/components/agents/announce-run";
 import { AgentRunViewer } from "@/components/agents/agent-run-viewer";
 import { Button } from "@/components/ui/button";
 
@@ -19,12 +20,15 @@ export function OptimizerPanel({
   latestRun,
   pendingProposalId,
   canRun,
+  agentsPaused,
 }: {
   productId: string;
   latestRun: AgentRun | undefined;
   /** A listing proposal for this product already waiting for a decision. */
   pendingProposalId: string | undefined;
   canRun: boolean;
+  /** The kill switch is on in this workspace. */
+  agentsPaused: boolean;
 }) {
   const router = useRouter();
   const [starting, startTransition] = useTransition();
@@ -44,16 +48,13 @@ export function OptimizerPanel({
         toast.error(result.message);
         return;
       }
-      const { proposalId } = result;
-      if (proposalId) {
-        toast.success("Proposal added to the approval inbox", {
-          action: { label: "Review", onClick: () => router.push(`/approvals?proposal=${proposalId}`) },
-        });
-      }
+      announceRunOutcome(result, { what: "Proposal", open: (href) => router.push(href) });
     });
   }, [latestRunId, router]);
 
-  const blockedReason = !canRun
+  const blockedReason = agentsPaused
+    ? "Agents are paused in this workspace. An owner can resume them in Settings."
+    : !canRun
     ? "You can't run agents on this account."
     : pendingProposalId && !running
       ? "A listing proposal for this product is waiting for approval."

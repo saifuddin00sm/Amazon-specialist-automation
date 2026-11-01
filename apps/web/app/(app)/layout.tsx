@@ -1,4 +1,6 @@
+import { connection } from "next/server";
 import { Suspense } from "react";
+import { AgentsPausedBanner } from "@/components/shell/agents-paused-banner";
 import { AppSidebar } from "@/components/shell/app-sidebar";
 import { SellerContextProvider } from "@/components/shell/seller-context";
 import { TopBar } from "@/components/shell/top-bar";
@@ -14,21 +16,30 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   );
 }
 
-/** With DATA_SOURCE=supabase the shell's workspaces depend on who is signed in, so it renders per request. */
+/**
+ * Renders per request: the workspaces depend on who is signed in, and settings (the kill switch,
+ * accounts, roles) change at runtime. Without connection() the mock shell would be prerendered.
+ */
 async function AppShell({ children }: { children: React.ReactNode }) {
+  await connection();
   const dataSource = await getDataSource();
   const [workspaces, sellerAccounts, user] = await Promise.all([
     dataSource.listWorkspaces(),
     dataSource.listSellerAccounts(),
     getSignedInUser(),
   ]);
+  const acting = await Promise.all(workspaces.map((workspace) => dataSource.getActingMember(workspace.id)));
+  const members = Object.fromEntries(
+    acting.flatMap((member) => (member ? [[member.workspaceId, { id: member.id, name: member.name, role: member.role }]] : [])),
+  );
 
   return (
-    <SellerContextProvider workspaces={workspaces} sellerAccounts={sellerAccounts}>
+    <SellerContextProvider workspaces={workspaces} sellerAccounts={sellerAccounts} members={members}>
       <SidebarProvider>
         <AppSidebar />
         <SidebarInset>
           <TopBar user={user} />
+          <AgentsPausedBanner />
           <main className="flex flex-1 flex-col p-4 md:p-6">{children}</main>
         </SidebarInset>
       </SidebarProvider>
