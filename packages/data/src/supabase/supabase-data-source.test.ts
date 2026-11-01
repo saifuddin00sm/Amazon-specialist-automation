@@ -101,6 +101,43 @@ describe.skipIf(skip)("supabase DataSource as a signed-in member", () => {
     expect(updated.branding).toEqual(branding);
   });
 
+  it("enforces the kill switch and auto-approval in the database for signed-in members", async () => {
+    const owner = memberOf(merchant!.id, "owner");
+    const specialist = memberOf(merchant!.id, "specialist");
+    const account = dataset.sellerAccounts.find((candidate) => candidate.workspaceId === merchant!.id)!;
+    const campaign = dataset.campaigns.find(
+      (candidate) => candidate.sellerAccountId === account.id && candidate.state === "enabled" && candidate.targetingType === "manual",
+    )!;
+    const ownerSource = await signedIn(owner.email);
+
+    // A specialist may pause (through set_agents_paused) but not resume.
+    const specialistSource = await signedIn(specialist.email);
+    await specialistSource.setAgentsPaused({ workspaceId: merchant!.id, memberId: specialist.id, paused: true });
+    await expect(specialistSource.setAgentsPaused({ workspaceId: merchant!.id, memberId: specialist.id, paused: false })).rejects.toMatchObject({
+      code: "forbidden",
+    });
+    // Row-level security refuses a new run while paused, even past the app's own check.
+    const { error } = await (await signInAs(env!, admin, owner.email)).client.from("agent_runs").insert({
+      id: "run_paused",
+      workspace_id: merchant!.id,
+      seller_account_id: account.id,
+      agent: "campaign_optimizer",
+      status: "running",
+      autonomy_level: "L1",
+      trigger: "manual",
+      started_at: now().toISOString(),
+    });
+    expect(error).not.toBeNull();
+    await ownerSource.setAgentsPaused({ workspaceId: merchant!.id, memberId: owner.id, paused: false });
+
+    // At L3 the plan is filed already approved by the system, through the auto-approval policy.
+    await ownerSource.updateSellerAccountSettings({ sellerAccountId: account.id, memberId: owner.id, autonomyByAction: { campaign_plan: "L3" } });
+    const run = await ownerSource.startCampaignOptimizer({ campaignId: campaign.id, memberId: owner.id });
+    const { proposal } = await ownerSource.completeAgentRun(run.id);
+    expect(proposal).toMatchObject({ status: "approved", decidedBy: { type: "system" } });
+    expect(await ownerSource.getProposal(proposal!.id)).toEqual(proposal);
+  });
+
   it("lets a client approver plan a campaign on their own account and approve the plan through row-level security", async () => {
     const approver = dataset.members.find((member) => member.role === "client_approver")!;
     const campaign = dataset.campaigns.find(

@@ -6,7 +6,9 @@ import type {
   Campaign,
   DiffEdit,
   ListingVersion,
+  Marketplace,
   Member,
+  MemberRole,
   MetricsDaily,
   MetricsEntityType,
   Product,
@@ -20,6 +22,7 @@ import type {
   Target,
   Workspace,
 } from "@app/core";
+import type { AccountSettingsChange } from "./settings-writes";
 
 /** Inclusive range of calendar days, YYYY-MM-DD. */
 export type DateRange = { from: string; to: string };
@@ -80,6 +83,18 @@ export type StartCampaignOptimizerInput = { campaignId: string; memberId: string
 /** Report branding for a workspace; null goes back to the default. */
 export type UpdateWorkspaceBrandingInput = { workspaceId: string; memberId: string; branding: Branding | null };
 
+/** Guardrails and autonomy for one account. Fields left out stay as they are. */
+export type UpdateSellerAccountSettingsInput = { sellerAccountId: string; memberId: string } & AccountSettingsChange;
+
+export type ConnectSellerAccountInput = { workspaceId: string; memberId: string; name: string; marketplace: Marketplace };
+
+/** `memberId` makes the change; the team writes act on someone else. */
+export type InviteMemberInput = { workspaceId: string; memberId: string; name: string; email: string; role: MemberRole; sellerAccountIds: string[] };
+export type UpdateMemberInput = { memberId: string; targetMemberId: string; role: MemberRole; sellerAccountIds: string[] };
+export type RemoveMemberInput = { memberId: string; targetMemberId: string };
+
+export type SetAgentsPausedInput = { workspaceId: string; memberId: string; paused: boolean };
+
 export type AgentRunErrorCode = "not_found" | "forbidden" | "conflict";
 
 /** An agent run the data source refused to start or complete. `message` is safe to show. */
@@ -107,6 +122,23 @@ export interface DataSource {
    * Throws SettingsWriteError when refused.
    */
   updateWorkspaceBranding(input: UpdateWorkspaceBrandingInput): Promise<Workspace>;
+  /** Sets an account's guardrails and autonomy as its workspace's owner. Writes settings.updated. */
+  updateSellerAccountSettings(input: UpdateSellerAccountSettingsInput): Promise<SellerAccount>;
+  /**
+   * Connects a new seller account as the workspace's owner. Phase 1 mocks Amazon's authorization:
+   * nothing is sent to Amazon and the account starts without data. Writes seller_account.connected.
+   */
+  connectSellerAccount(input: ConnectSellerAccountInput): Promise<SellerAccount>;
+  /** Owners manage the team. Each write records member.invited, member.updated or member.removed. */
+  inviteMember(input: InviteMemberInput): Promise<Member>;
+  updateMember(input: UpdateMemberInput): Promise<Member>;
+  removeMember(input: RemoveMemberInput): Promise<void>;
+  /**
+   * The kill switch. Pausing cancels the workspace's runs in flight; until an owner resumes, no
+   * agent starts, files or auto-approves anything. Writes agents.paused or agents.resumed.
+   * Settings writes throw SettingsWriteError when refused.
+   */
+  setAgentsPaused(input: SetAgentsPausedInput): Promise<Workspace>;
 
   listProducts(query: ProductQuery): Promise<Product[]>;
   getProduct(id: string): Promise<Product | undefined>;

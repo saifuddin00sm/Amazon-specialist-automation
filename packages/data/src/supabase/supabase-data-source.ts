@@ -1,5 +1,6 @@
 import {
   checkProposalCompliance,
+  guardrailsFor,
   type AdMetricsDaily,
   type AuditEvent,
   type ListingVersion,
@@ -20,7 +21,17 @@ import {
   type ProposalWriteContext,
   type ProposalWriteResult,
 } from "../proposal-writes";
-import { SettingsWriteError, brandingWrite } from "../settings-writes";
+import {
+  SettingsWriteError,
+  accountSettingsWrite,
+  agentsPausedWrite,
+  brandingWrite,
+  connectAccountWrite,
+  inviteMemberWrite,
+  removeMemberWrite,
+  updateMemberWrite,
+} from "../settings-writes";
+import { randomSellerId } from "../seller-id";
 import type { Database, Json } from "./database.types";
 import {
   adGroupFromRow,
@@ -32,6 +43,7 @@ import {
   listingVersionFromRow,
   listingVersionToRow,
   memberFromRow,
+  memberToRow,
   metricsDailyFromRow,
   productFactsFromRow,
   productFromRow,
@@ -40,6 +52,7 @@ import {
   reviewFromRow,
   reviewToRow,
   sellerAccountFromRow,
+  sellerAccountToRow,
   targetFromRow,
   workspaceFromRow,
 } from "./rows";
@@ -135,19 +148,49 @@ export function createSupabaseDataSource(
     return memberFromRow(row);
   };
 
+  const getSellerAccount = async (id: string) => {
+    const row = must(await db.from("seller_accounts").select().eq("id", id).maybeSingle());
+    return row ? sellerAccountFromRow(row) : undefined;
+  };
+  const getWorkspace = async (id: string) => {
+    const row = must(await db.from("workspaces").select().eq("id", id).maybeSingle());
+    return row ? workspaceFromRow(row) : undefined;
+  };
+  const listMembers = async (workspaceId: string) =>
+    (await selectAll((from, to) => db.from("members").select().eq("workspace_id", workspaceId).order("id").range(from, to))).map(memberFromRow);
+  /** What a team write needs: the workspace, the member writing, everyone in it and its accounts. */
+  const teamContext = async (workspaceId: string, memberId: string) => {
+    const [workspace, member, members, accounts] = await Promise.all([
+      getWorkspace(workspaceId),
+      writingMember(memberId),
+      listMembers(workspaceId),
+      selectAll((from, to) => db.from("seller_accounts").select("id").eq("workspace_id", workspaceId).order("id").range(from, to)),
+    ]);
+    return { workspace, member, members, accountIds: accounts.map((account) => account.id), at: now().toISOString() };
+  };
+  /** A settings RPC that returned false wrote nothing: RLS hid the row from this caller. */
+  const settingsSaved = (saved: boolean | null, message: string) => {
+    if (!saved) throw new SettingsWriteError("forbidden", message);
+  };
+
   const withIds = (events: AuditEventDraft[]) =>
     events.map((event) => auditEventToRow({ id: newId("aud"), ...event } satisfies AuditEvent));
 
   const writeContext = async (proposalId: string, memberId: string): Promise<ProposalWriteContext> => {
     const [proposal, member] = await Promise.all([getProposal(proposalId), writingMember(memberId)]);
     const productId = proposal?.target.type === "product" ? proposal.target.id : undefined;
-    const [versions, facts] = productId ? await Promise.all([listListingVersions(productId), getProductFacts(productId)]) : [[], undefined];
+    const [versions, facts, account] = await Promise.all([
+      productId ? listListingVersions(productId) : [],
+      productId ? getProductFacts(productId) : undefined,
+      proposal ? getSellerAccount(proposal.sellerAccountId) : undefined,
+    ]);
     const liveListing = versions.find((version) => version.status === "live");
     return {
       proposal,
       member,
       at: now().toISOString(),
-      checkCompliance: (diff) => checkProposalCompliance({ type: proposal?.type ?? "listing_update", diff, liveListing, facts }),
+      checkCompliance: (diff) =>
+        checkProposalCompliance({ type: proposal?.type ?? "listing_update", diff, liveListing, facts, guardrails: guardrailsFor(account ?? {}) }),
     };
   };
 
@@ -179,8 +222,10 @@ export function createSupabaseDataSource(
       db.from("proposals").select().eq("target_id", productId).eq("type", "listing_update").eq("status", "pending_approval"),
     ]);
     const account = accountRow ? must(accountRow) : null;
+    const workspace = account ? await getWorkspace(account.workspace_id) : undefined;
     const live: ListingVersion | undefined = versions.find((version) => version.status === "live");
     return {
+      workspaces: workspace ? [workspace] : [],
       members: member ? [member] : [],
       sellerAccounts: account ? [sellerAccountFromRow(account)] : [],
       products: product ? [product] : [],
@@ -219,6 +264,7 @@ export function createSupabaseDataSource(
       db.from("proposals").select().eq("target_id", campaignId).eq("type", "campaign_plan").eq("status", "pending_approval"),
     ]);
     const account = must(accountRow);
+    const workspace = account ? await getWorkspace(account.workspace_id) : undefined;
     const ownGroupIds = new Set(adGroups.filter((row) => row.campaign_id === campaignId).map((row) => row.id));
     const ownTargetIds = targets.filter((row) => ownGroupIds.has(row.ad_group_id)).map((row) => row.id);
     const window = campaignOptimizerWindow(available);
@@ -239,6 +285,7 @@ export function createSupabaseDataSource(
           )
         : [];
     return {
+      workspace,
       members: member ? [member] : [],
       account: account ? sellerAccountFromRow(account) : undefined,
       campaign: campaignRow ? campaignFromRow(campaignRow) : undefined,
@@ -264,10 +311,7 @@ export function createSupabaseDataSource(
     async listWorkspaces() {
       return (await selectAll((from, to) => db.from("workspaces").select().order("id").range(from, to))).map(workspaceFromRow);
     },
-    async getWorkspace(id) {
-      const row = must(await db.from("workspaces").select().eq("id", id).maybeSingle());
-      return row ? workspaceFromRow(row) : undefined;
-    },
+    getWorkspace,
     async updateWorkspaceBranding({ workspaceId, memberId, branding }) {
       const [row, member] = await Promise.all([db.from("workspaces").select().eq("id", workspaceId).maybeSingle(), writingMember(memberId)]);
       const workspace = must(row);
@@ -282,11 +326,7 @@ export function createSupabaseDataSource(
       if (!saved) throw new SettingsWriteError("forbidden", "Only workspace owners can change report branding.");
       return result.workspace;
     },
-    async listMembers(workspaceId) {
-      return (
-        await selectAll((from, to) => db.from("members").select().eq("workspace_id", workspaceId).order("id").range(from, to))
-      ).map(memberFromRow);
-    },
+    listMembers,
     async getActingMember(workspaceId) {
       const query = db.from("members").select().eq("workspace_id", workspaceId);
       const row = must(
@@ -304,9 +344,71 @@ export function createSupabaseDataSource(
         })
       ).map(sellerAccountFromRow);
     },
-    async getSellerAccount(id) {
-      const row = must(await db.from("seller_accounts").select().eq("id", id).maybeSingle());
-      return row ? sellerAccountFromRow(row) : undefined;
+    getSellerAccount,
+    async updateSellerAccountSettings({ sellerAccountId, memberId, ...change }) {
+      const [account, member] = await Promise.all([getSellerAccount(sellerAccountId), writingMember(memberId)]);
+      const result = accountSettingsWrite({ account, member, at: now().toISOString() }, change);
+      settingsSaved(
+        must(await db.rpc("update_seller_account_settings", { p_account: sellerAccountToRow(result.account) as Json, p_events: withIds(result.events) })),
+        "Only workspace owners can change this.",
+      );
+      return result.account;
+    },
+    async connectSellerAccount({ workspaceId, memberId, name, marketplace }) {
+      const [workspace, member] = await Promise.all([getWorkspace(workspaceId), writingMember(memberId)]);
+      const result = connectAccountWrite(
+        { workspace, member, at: now().toISOString(), id: newId("sa"), sellerId: randomSellerId() },
+        { name, marketplace },
+      );
+      must(await db.rpc("connect_seller_account", { p_account: sellerAccountToRow(result.account) as Json, p_events: withIds(result.events) }));
+      return result.account;
+    },
+    async inviteMember({ workspaceId, memberId, ...invite }) {
+      const result = inviteMemberWrite({ ...(await teamContext(workspaceId, memberId)), id: newId("mem") }, invite);
+      must(await db.rpc("save_member", { p_member: memberToRow(result.member) as Json, p_events: withIds(result.events) }));
+      return result.member;
+    },
+    async updateMember({ memberId, targetMemberId, role, sellerAccountIds }) {
+      const target = must(await db.from("members").select().eq("id", targetMemberId).maybeSingle());
+      const ctx = await teamContext(target?.workspace_id ?? "", memberId);
+      const result = updateMemberWrite({ ...ctx, target: target ? memberFromRow(target) : undefined }, { role, sellerAccountIds });
+      must(await db.rpc("save_member", { p_member: memberToRow(result.member) as Json, p_events: withIds(result.events) }));
+      return result.member;
+    },
+    async removeMember({ memberId, targetMemberId }) {
+      const target = must(await db.from("members").select().eq("id", targetMemberId).maybeSingle());
+      const ctx = await teamContext(target?.workspace_id ?? "", memberId);
+      const result = removeMemberWrite({ ...ctx, target: target ? memberFromRow(target) : undefined });
+      settingsSaved(
+        must(await db.rpc("remove_member", { p_member_id: targetMemberId, p_events: withIds(result.events) })),
+        "Only workspace owners can manage the team.",
+      );
+    },
+    async setAgentsPaused({ workspaceId, memberId, paused }) {
+      const [workspace, member, running] = await Promise.all([
+        getWorkspace(workspaceId),
+        writingMember(memberId),
+        selectAll((from, to) =>
+          db.from("agent_runs").select().eq("workspace_id", workspaceId).in("status", ["queued", "running"]).order("id").range(from, to),
+        ),
+      ]);
+      const at = now().toISOString();
+      const result = agentsPausedWrite({ workspace, member, runningRuns: running.map(agentRunFromRow), at }, paused);
+      settingsSaved(
+        must(
+          await db.rpc("set_agents_paused", {
+            p_workspace_id: workspaceId,
+            p_member_id: memberId,
+            // The generated type says string; null resumes.
+            p_paused_at: (result.workspace.agentsPausedAt ?? null) as string,
+            p_cancel_run_ids: result.cancelledRuns.map((run) => run.id),
+            p_finished_at: at,
+            p_events: withIds(result.events),
+          }),
+        ),
+        paused ? "Only owners and specialists can pause agents." : "Only workspace owners can resume agents.",
+      );
+      return result.workspace;
     },
 
     async listProducts({ sellerAccountId, category, status }) {
@@ -490,13 +592,17 @@ export function createSupabaseDataSource(
       const store = await runStore(run.subject?.id ?? "");
       const result = completeListingOptimizerRun(store, run, now().toISOString());
       const scope = scopeOf(run);
-      const { data: filed, error } = await db.rpc("file_agent_run_output", {
-        p_run: agentRunToRow(result.run),
-        p_listing_version: listingVersionToRow(result.version, scope),
-        p_review: reviewToRow(result.review, scope),
-        p_proposal: proposalToRow(result.proposal),
-        p_events: withIds(result.events),
-      });
+      // At L0 the run files nothing: it only finishes.
+      const { data: filed, error } =
+        result.version && result.review && result.proposal
+          ? await db.rpc("file_agent_run_output", {
+              p_run: agentRunToRow(result.run),
+              p_listing_version: listingVersionToRow(result.version, scope),
+              p_review: reviewToRow(result.review, scope),
+              p_proposal: proposalToRow(result.proposal),
+              p_events: withIds(result.events),
+            })
+          : await db.rpc("finish_agent_run", { p_run: agentRunToRow(result.run), p_events: withIds(result.events) });
       if (error?.code === UNIQUE_VIOLATION) {
         throw new AgentRunError("conflict", "A listing proposal for this product is already waiting for approval.");
       }

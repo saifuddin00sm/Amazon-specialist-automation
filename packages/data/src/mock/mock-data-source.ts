@@ -1,5 +1,6 @@
 import {
   checkProposalCompliance,
+  guardrailsFor,
   type AdMetricsDaily,
   type AgentRun,
   type AuditEvent,
@@ -16,8 +17,17 @@ import {
   type ProposalWriteContext,
   type ProposalWriteResult,
 } from "../proposal-writes";
-import { brandingWrite } from "../settings-writes";
+import {
+  accountSettingsWrite,
+  agentsPausedWrite,
+  brandingWrite,
+  connectAccountWrite,
+  inviteMemberWrite,
+  removeMemberWrite,
+  updateMemberWrite,
+} from "../settings-writes";
 import { completeListingOptimizerRun, startListingOptimizerRun } from "../agents/agent-runs";
+import { randomSellerId } from "../seller-id";
 import { generateMockDataset, type MockDataset } from "./generate";
 
 export type MockDataSourceOptions = {
@@ -32,6 +42,8 @@ export type MockDataSourceOptions = {
 export function createMockDataSource(dataset: MockDataset, { now = () => new Date() }: MockDataSourceOptions = {}): DataSource {
   deepFreeze(dataset);
   const workspaces = [...dataset.workspaces];
+  const members = [...dataset.members];
+  const sellerAccounts = [...dataset.sellerAccounts];
   const proposals = [...dataset.proposals];
   const listingVersions = [...dataset.listingVersions];
   const auditEvents = [...dataset.auditEvents];
@@ -40,6 +52,8 @@ export function createMockDataSource(dataset: MockDataset, { now = () => new Dat
   const nextAuditId = idSequence("aud", auditEvents);
   const nextId = {
     run: idSequence("run", agentRuns),
+    member: idSequence("mem", members),
+    sellerAccount: idSequence("sa", sellerAccounts),
     listingVersion: idSequence("lv", listingVersions),
     review: idSequence("rev", reviews),
     proposal: idSequence("prop", proposals),
@@ -49,7 +63,7 @@ export function createMockDataSource(dataset: MockDataset, { now = () => new Dat
   const limited = <T>(items: T[], limit?: number) => (limit === undefined ? items : items.slice(0, limit));
   const isSnoozed = (proposal: Proposal, at: string) => proposal.snoozedUntil !== undefined && proposal.snoozedUntil > at;
   const actingMember = (workspaceId: string) =>
-    dataset.members.find((member) => member.workspaceId === workspaceId && member.role === "owner");
+    members.find((member) => member.workspaceId === workspaceId && member.role === "owner");
 
   const liveListing = (productId: string) =>
     listingVersions.find((version) => version.productId === productId && version.status === "live");
@@ -59,7 +73,7 @@ export function createMockDataSource(dataset: MockDataset, { now = () => new Dat
     const productId = proposal?.target.type === "product" ? proposal.target.id : undefined;
     return {
       proposal,
-      member: byId(dataset.members, memberId),
+      member: byId(members, memberId),
       at: now().toISOString(),
       checkCompliance: (diff) =>
         checkProposalCompliance({
@@ -67,6 +81,7 @@ export function createMockDataSource(dataset: MockDataset, { now = () => new Dat
           diff,
           liveListing: productId ? liveListing(productId) : undefined,
           facts: productId ? dataset.productFacts.find((facts) => facts.productId === productId) : undefined,
+          guardrails: guardrailsFor(byId(sellerAccounts, proposal?.sellerAccountId ?? "") ?? {}),
         }),
     };
   };
@@ -75,6 +90,18 @@ export function createMockDataSource(dataset: MockDataset, { now = () => new Dat
     // Newest first, like the generated feed.
     for (const draft of events) auditEvents.unshift(deepFreeze<AuditEvent>({ id: nextAuditId(), ...draft }));
   };
+
+  /** Replaces a record in one of the mutable arrays. */
+  const replace = <T extends { id: string }>(items: T[], record: T) => {
+    items[items.findIndex((item) => item.id === record.id)] = deepFreeze(record);
+  };
+  const teamContext = (workspaceId: string, memberId: string) => ({
+    workspace: byId(workspaces, workspaceId),
+    member: byId(members, memberId),
+    members: members.filter((member) => member.workspaceId === workspaceId),
+    accountIds: sellerAccounts.filter((account) => account.workspaceId === workspaceId).map((account) => account.id),
+    at: now().toISOString(),
+  });
 
   const commit = ({ proposal, events }: ProposalWriteResult): Proposal => {
     const index = proposals.findIndex((candidate) => candidate.id === proposal.id);
@@ -92,7 +119,7 @@ export function createMockDataSource(dataset: MockDataset, { now = () => new Dat
   /** What a campaign optimizer run reads about `campaignId`. */
   const campaignRunStore = (campaignId: string): CampaignRunStore => {
     const campaign = byId(dataset.campaigns, campaignId);
-    const account = campaign && byId(dataset.sellerAccounts, campaign.sellerAccountId);
+    const account = campaign && byId(sellerAccounts, campaign.sellerAccountId);
     const accountId = account?.id;
     const campaigns = dataset.campaigns.filter((candidate) => candidate.sellerAccountId === accountId);
     const campaignIds = new Set(campaigns.map((candidate) => candidate.id));
@@ -105,7 +132,8 @@ export function createMockDataSource(dataset: MockDataset, { now = () => new Dat
     const products = dataset.products.filter((product) => product.sellerAccountId === accountId);
     const productIds = new Set(products.map((product) => product.id));
     return {
-      members: dataset.members,
+      workspace: account && byId(workspaces, account.workspaceId),
+      members: members,
       account,
       campaign,
       campaigns,
@@ -130,8 +158,9 @@ export function createMockDataSource(dataset: MockDataset, { now = () => new Dat
 
   /** What the agent-run writes read from and append to. */
   const runStore = () => ({
-    members: dataset.members,
-    sellerAccounts: dataset.sellerAccounts,
+    workspaces,
+    members: members,
+    sellerAccounts: sellerAccounts,
     products: dataset.products,
     productFacts: dataset.productFacts,
     listingVersions,
@@ -150,26 +179,74 @@ export function createMockDataSource(dataset: MockDataset, { now = () => new Dat
     },
     async updateWorkspaceBranding({ workspaceId, memberId, branding }) {
       const result = brandingWrite(
-        { workspace: byId(workspaces, workspaceId), member: byId(dataset.members, memberId), at: now().toISOString() },
+        { workspace: byId(workspaces, workspaceId), member: byId(members, memberId), at: now().toISOString() },
         branding,
       );
-      workspaces[workspaces.findIndex((workspace) => workspace.id === workspaceId)] = deepFreeze(result.workspace);
+      replace(workspaces, result.workspace);
+      appendAudit(result.events);
+      return result.workspace;
+    },
+    async updateSellerAccountSettings({ sellerAccountId, memberId, ...change }) {
+      const result = accountSettingsWrite(
+        { account: byId(sellerAccounts, sellerAccountId), member: byId(members, memberId), at: now().toISOString() },
+        change,
+      );
+      replace(sellerAccounts, result.account);
+      appendAudit(result.events);
+      return result.account;
+    },
+    async connectSellerAccount({ workspaceId, memberId, name, marketplace }) {
+      const result = connectAccountWrite(
+        { workspace: byId(workspaces, workspaceId), member: byId(members, memberId), at: now().toISOString(), id: nextId.sellerAccount(), sellerId: randomSellerId() },
+        { name, marketplace },
+      );
+      sellerAccounts.push(deepFreeze(result.account));
+      appendAudit(result.events);
+      return result.account;
+    },
+    async inviteMember({ workspaceId, memberId, ...invite }) {
+      const result = inviteMemberWrite({ ...teamContext(workspaceId, memberId), id: nextId.member() }, invite);
+      members.push(deepFreeze(result.member));
+      appendAudit(result.events);
+      return result.member;
+    },
+    async updateMember({ memberId, targetMemberId, role, sellerAccountIds }) {
+      const target = byId(members, targetMemberId);
+      const actor = byId(members, memberId);
+      const result = updateMemberWrite({ ...teamContext(actor?.workspaceId ?? "", memberId), target }, { role, sellerAccountIds });
+      replace(members, result.member);
+      appendAudit(result.events);
+      return result.member;
+    },
+    async removeMember({ memberId, targetMemberId }) {
+      const actor = byId(members, memberId);
+      const result = removeMemberWrite({ ...teamContext(actor?.workspaceId ?? "", memberId), target: byId(members, targetMemberId) });
+      members.splice(members.findIndex((member) => member.id === targetMemberId), 1);
+      appendAudit(result.events);
+    },
+    async setAgentsPaused({ workspaceId, memberId, paused }) {
+      const result = agentsPausedWrite(
+        { workspace: byId(workspaces, workspaceId), member: byId(members, memberId), runningRuns: agentRuns, at: now().toISOString() },
+        paused,
+      );
+      replace(workspaces, result.workspace);
+      for (const run of result.cancelledRuns) replace(agentRuns, run);
       appendAudit(result.events);
       return result.workspace;
     },
     async listMembers(workspaceId) {
-      return dataset.members.filter((member) => member.workspaceId === workspaceId);
+      return members.filter((member) => member.workspaceId === workspaceId);
     },
     async getActingMember(workspaceId) {
       return actingMember(workspaceId);
     },
     async listSellerAccounts(workspaceId) {
       return workspaceId
-        ? dataset.sellerAccounts.filter((account) => account.workspaceId === workspaceId)
-        : [...dataset.sellerAccounts];
+        ? sellerAccounts.filter((account) => account.workspaceId === workspaceId)
+        : [...sellerAccounts];
     },
     async getSellerAccount(id) {
-      return byId(dataset.sellerAccounts, id);
+      return byId(sellerAccounts, id);
     },
 
     async listProducts({ sellerAccountId, category, status }) {
@@ -330,9 +407,9 @@ export function createMockDataSource(dataset: MockDataset, { now = () => new Dat
       }
 
       const result = completeListingOptimizerRun(runStore(), run, now().toISOString());
-      listingVersions.push(deepFreeze(result.version));
-      reviews.unshift(deepFreeze(result.review));
-      proposals.unshift(deepFreeze(result.proposal));
+      if (result.version) listingVersions.push(deepFreeze(result.version));
+      if (result.review) reviews.unshift(deepFreeze(result.review));
+      if (result.proposal) proposals.unshift(deepFreeze(result.proposal));
       replaceRun(result.run);
       appendAudit(result.events);
       return { run: result.run, proposal: result.proposal };

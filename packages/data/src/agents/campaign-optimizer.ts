@@ -2,6 +2,7 @@ import {
   AD_GUARDRAILS,
   campaignPlanPath,
   checkProposalCompliance,
+  guardrailsFor,
   parseCampaignPlanLine,
   type AdGroup,
   type AdMetricsDaily,
@@ -106,6 +107,9 @@ export function planCampaignOptimizerRun(input: CampaignPlanInput): CampaignPlan
   const { runId, account, campaign, window, startedAt } = input;
   const money = (amount: number) => formatMoney(amount, account.currency);
   const target = account.targetAcos;
+  const guardrails = guardrailsFor(account);
+  // Never propose a bid the account's guardrails would block.
+  const capped = (bid: number) => Math.min(guardrails.maxBid, bid);
 
   const adGroups = input.adGroups.filter((adGroup) => adGroup.campaignId === campaign.id && adGroup.state === "enabled");
   const ownGroupIds = new Set(adGroups.map((adGroup) => adGroup.id));
@@ -141,7 +145,7 @@ export function planCampaignOptimizerRun(input: CampaignPlanInput): CampaignPlan
       note = `${stats.clicks} clicks and ${money(stats.spend)} spend without an order.`;
     }
     if (ratio === undefined || Math.abs(ratio - 1) < MIN_BID_STEP) continue;
-    const after = Math.max(MIN_BID, cents(bid * ratio));
+    const after = capped(Math.max(MIN_BID, cents(bid * ratio)));
     if (after === bid) continue;
     bidLines.push({
       entry: { path: campaignPlanPath.bid(candidate.id), before: bid, after },
@@ -170,7 +174,7 @@ export function planCampaignOptimizerRun(input: CampaignPlanInput): CampaignPlan
       );
       ideas.slice(0, Math.min(MAX_KEYWORDS_PER_AD_GROUP, MAX_KEYWORDS - keywordLines.length)).forEach((keyword, i) => {
         keywordLines.push({
-          entry: { path: campaignPlanPath.keyword(adGroup.id, i), before: null, after: { keyword, matchType: "exact", bid: adGroup.defaultBid } },
+          entry: { path: campaignPlanPath.keyword(adGroup.id, i), before: null, after: { keyword, matchType: "exact", bid: capped(adGroup.defaultBid) } },
           note: `Add "${keyword}" (exact) to ${adGroup.name} at ${money(adGroup.defaultBid)}: a ProductFacts target keyword the ad group doesn't target.`,
         });
       });
@@ -210,7 +214,7 @@ export function planCampaignOptimizerRun(input: CampaignPlanInput): CampaignPlan
   }
 
   const diff = [...bids, ...keywordLines, ...negativeLines].map((line) => line.entry);
-  const checks = diff.length > 0 ? checkProposalCompliance({ type: "campaign_plan", diff }) : [];
+  const checks = diff.length > 0 ? checkProposalCompliance({ type: "campaign_plan", diff, guardrails }) : [];
   const converting = targets.filter((candidate) => adPerformance(byTarget.get(candidate.id) ?? []).orders > 0).length;
   const active = targets.filter((candidate) => !candidate.negative && candidate.state === "enabled").length;
 

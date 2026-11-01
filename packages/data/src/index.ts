@@ -14,9 +14,16 @@ export type {
   SnoozeProposalInput,
   StartCampaignOptimizerInput,
   StartListingOptimizerInput,
+  ConnectSellerAccountInput,
+  InviteMemberInput,
+  RemoveMemberInput,
+  SetAgentsPausedInput,
+  UpdateMemberInput,
+  UpdateSellerAccountSettingsInput,
   UpdateWorkspaceBrandingInput,
 } from "./data-source";
-export { SettingsWriteError, type SettingsWriteErrorCode } from "./settings-writes";
+export { AGENTS_PAUSED_MESSAGE, SUGGESTIONS_ONLY_TITLE } from "./agents/autonomy";
+export { SettingsWriteError, type AccountSettingsChange, type SettingsWriteErrorCode } from "./settings-writes";
 export { CAMPAIGN_OPTIMIZER_DAYS, adPerformance, campaignOptimizerWindow, type AdPerformance } from "./agents/campaign-optimizer";
 export {
   MOCK_ANCHOR_DATE,

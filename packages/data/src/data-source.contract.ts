@@ -423,6 +423,166 @@ export function describeDataSourceContract(
       });
     });
 
+    describe("settings", () => {
+      const merchantCampaign = () =>
+        dataset().campaigns.find(
+          (candidate) =>
+            candidate.sellerAccountId === merchantAccount().id &&
+            candidate.state === "enabled" &&
+            candidate.type === "sponsored_products" &&
+            candidate.targetingType === "manual",
+        )!;
+
+      it("saves guardrails and autonomy for owners only, and approvals follow the caps", async () => {
+        const { source } = await setup();
+        const account = merchantAccount();
+        const owner = memberOf(account.workspaceId, "owner");
+        const guardrails = { maxBid: 0.3, maxBidStep: 0.25, maxDailyBudget: 500, maxBudgetStep: 0.5 };
+
+        await expect(
+          source.updateSellerAccountSettings({ sellerAccountId: account.id, memberId: memberOf(account.workspaceId, "specialist").id, guardrails }),
+        ).rejects.toMatchObject({ code: "forbidden" });
+        await expect(
+          source.updateSellerAccountSettings({ sellerAccountId: account.id, memberId: owner.id, guardrails: { ...guardrails, maxBid: -1 } }),
+        ).rejects.toMatchObject({ code: "invalid_input" });
+
+        const updated = await source.updateSellerAccountSettings({
+          sellerAccountId: account.id,
+          memberId: owner.id,
+          guardrails,
+          autonomyByAction: { bid_change: "L2" },
+        });
+        expect(updated).toEqual({ ...account, guardrails, autonomyByAction: { bid_change: "L2" } });
+        expect(await source.getSellerAccount(account.id)).toEqual(updated);
+        const [event] = await latestEvents(source, account.workspaceId, 1);
+        expect(event).toMatchObject({ action: "settings.updated", entity: { type: "seller_account", id: account.id }, metadata: { setting: "agents" } });
+
+        // A pending bid above the new cap can't be approved any more.
+        const bid = dataset().proposals.find(
+          (proposal) =>
+            proposal.sellerAccountId === account.id &&
+            proposal.status === "pending_approval" &&
+            proposal.type === "bid_change" &&
+            Number(proposal.diff[0]?.after) > guardrails.maxBid,
+        )!;
+        await expect(source.approveProposal({ proposalId: bid.id, memberId: owner.id })).rejects.toMatchObject({ code: "compliance_failed" });
+
+        await source.updateSellerAccountSettings({ sellerAccountId: account.id, memberId: owner.id, guardrails: null, autonomyByAction: null });
+        expect(await source.getSellerAccount(account.id)).toEqual(account);
+      });
+
+      it("files nothing at L0, auto-approves at L3, and keeps plans under the bid cap", async () => {
+        const { source } = await setup();
+        const account = merchantAccount();
+        const owner = memberOf(account.workspaceId, "owner");
+        const campaign = merchantCampaign();
+        const plan = async () => source.completeAgentRun((await source.startCampaignOptimizer({ campaignId: campaign.id, memberId: owner.id })).id);
+
+        await source.updateSellerAccountSettings({ sellerAccountId: account.id, memberId: owner.id, autonomyByAction: { campaign_plan: "L0" } });
+        const suggested = await plan();
+        expect(suggested.proposal).toBeUndefined();
+        expect(suggested.run).toMatchObject({ status: "succeeded", proposalIds: [] });
+        expect(suggested.run.steps?.at(-1)?.title).toBe("Suggestions only");
+
+        await source.updateSellerAccountSettings({
+          sellerAccountId: account.id,
+          memberId: owner.id,
+          autonomyByAction: { campaign_plan: "L3" },
+          guardrails: { maxBid: 1, maxBidStep: 0.5, maxDailyBudget: 10_000, maxBudgetStep: 1 },
+        });
+        const { run, proposal } = await plan();
+        expect(proposal).toMatchObject({ status: "approved", decidedBy: { type: "system" } });
+        expect(run.steps?.at(-1)).toMatchObject({ title: "Auto-approved", proposalId: proposal!.id });
+        const bids = proposal!.diff.flatMap((entry) =>
+          typeof entry.after === "number" ? [entry.after] : entry.after && typeof entry.after === "object" && "bid" in entry.after ? [Number(entry.after.bid)] : [],
+        );
+        expect(bids.length).toBeGreaterThan(0);
+        expect(bids.every((bid) => bid <= 1)).toBe(true);
+        const events = await latestEvents(source, account.workspaceId, 3);
+        expect(events.map((event) => event.action)).toEqual(["proposal.approved", "proposal.created", "agent_run.finished"]);
+        expect(events[0]).toMatchObject({ actor: { type: "system" } });
+      });
+
+      it("the kill switch cancels runs in flight and stops agents until an owner resumes", async () => {
+        const { source } = await setup();
+        const { merchant } = workspaces();
+        const owner = memberOf(merchant.id, "owner");
+        const specialist = memberOf(merchant.id, "specialist");
+        const running = dataset().agentRuns.filter((run) => run.workspaceId === merchant.id && run.status === "running");
+        expect(running.length).toBeGreaterThan(0);
+
+        await expect(source.setAgentsPaused({ workspaceId: merchant.id, memberId: memberOf(merchant.id, "viewer").id, paused: true })).rejects.toMatchObject({
+          code: "forbidden",
+        });
+        const paused = await source.setAgentsPaused({ workspaceId: merchant.id, memberId: specialist.id, paused: true });
+        expect(paused).toMatchObject({ agentsPausedBy: specialist.id, agentsPausedAt: "2026-10-31T09:00:00.000Z" });
+        expect(await source.getWorkspace(merchant.id)).toEqual(paused);
+        for (const run of running) expect(await source.getAgentRun(run.id)).toMatchObject({ status: "cancelled" });
+        const [event] = await latestEvents(source, merchant.id, 1 + running.length).then((events) => events.filter((e) => e.action === "agents.paused"));
+        expect(event).toMatchObject({ actor: { type: "member", memberId: specialist.id }, metadata: { cancelledRuns: running.map((run) => run.id) } });
+
+        await expect(source.startCampaignOptimizer({ campaignId: merchantCampaign().id, memberId: owner.id })).rejects.toMatchObject({ code: "conflict" });
+        await expect(source.setAgentsPaused({ workspaceId: merchant.id, memberId: specialist.id, paused: false })).rejects.toMatchObject({ code: "forbidden" });
+
+        const resumed = await source.setAgentsPaused({ workspaceId: merchant.id, memberId: owner.id, paused: false });
+        expect(resumed).toEqual(merchant);
+        expect((await source.startCampaignOptimizer({ campaignId: merchantCampaign().id, memberId: owner.id })).status).toBe("running");
+      });
+
+      it("connects a new seller account for owners", async () => {
+        const { source } = await setup();
+        const { agency } = workspaces();
+        const owner = memberOf(agency.id, "owner");
+        await expect(
+          source.connectSellerAccount({ workspaceId: agency.id, memberId: memberOf(agency.id, "specialist").id, name: "Nope", marketplace: "US" }),
+        ).rejects.toMatchObject({ code: "forbidden" });
+
+        const account = await source.connectSellerAccount({ workspaceId: agency.id, memberId: owner.id, name: " Fjordline FR ", marketplace: "FR" });
+        expect(account).toMatchObject({ workspaceId: agency.id, name: "Fjordline FR", marketplace: "FR", currency: "EUR", autonomyLevel: "L1" });
+        expect(account.sellerId).toMatch(/^A[0-9A-Z]{13}$/);
+        expect(await source.getSellerAccount(account.id)).toEqual(account);
+        expect((await source.listSellerAccounts(agency.id)).map((candidate) => candidate.id)).toContain(account.id);
+        const [event] = await latestEvents(source, agency.id, 1);
+        expect(event).toMatchObject({ action: "seller_account.connected", entity: { id: account.id }, metadata: { marketplace: "FR" } });
+      });
+
+      it("lets owners invite, change and remove members, but not themselves", async () => {
+        const { source } = await setup();
+        const { agency } = workspaces();
+        const owner = memberOf(agency.id, "owner");
+        const accountId = dataset().sellerAccounts.find((account) => account.workspaceId === agency.id)!.id;
+
+        await expect(
+          source.inviteMember({ workspaceId: agency.id, memberId: owner.id, name: "Ida Berg", email: "ida@client.example.com", role: "client_approver", sellerAccountIds: [] }),
+        ).rejects.toMatchObject({ code: "invalid_input" });
+        const invited = await source.inviteMember({
+          workspaceId: agency.id,
+          memberId: owner.id,
+          name: "Ida Berg",
+          email: "Ida@Client.example.com",
+          role: "client_approver",
+          sellerAccountIds: [accountId],
+        });
+        expect(invited).toMatchObject({ email: "ida@client.example.com", role: "client_approver", sellerAccountIds: [accountId] });
+        expect(await source.listMembers(agency.id)).toContainEqual(invited);
+        await expect(
+          source.inviteMember({ workspaceId: agency.id, memberId: owner.id, name: "Ida", email: "ida@client.example.com", role: "viewer", sellerAccountIds: [] }),
+        ).rejects.toMatchObject({ code: "conflict" });
+
+        const promoted = await source.updateMember({ memberId: owner.id, targetMemberId: invited.id, role: "specialist", sellerAccountIds: [] });
+        expect(promoted).toMatchObject({ role: "specialist", sellerAccountIds: [] });
+        await expect(source.updateMember({ memberId: owner.id, targetMemberId: owner.id, role: "viewer", sellerAccountIds: [] })).rejects.toMatchObject({
+          code: "conflict",
+        });
+        await expect(source.removeMember({ memberId: invited.id, targetMemberId: owner.id })).rejects.toMatchObject({ code: "forbidden" });
+
+        await source.removeMember({ memberId: owner.id, targetMemberId: invited.id });
+        expect((await source.listMembers(agency.id)).map((member) => member.id)).not.toContain(invited.id);
+        const actions = (await latestEvents(source, agency.id, 3)).map((event) => event.action);
+        expect(actions).toEqual(["member.removed", "member.updated", "member.invited"]);
+      });
+    });
+
     describe("campaign optimizer runs", () => {
       const subject = () => {
         const { merchant } = workspaces();

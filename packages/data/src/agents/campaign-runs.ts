@@ -1,7 +1,10 @@
 import {
   AgentRunSchema,
   ProposalSchema,
+  autonomyFor,
   canActOnAccount,
+  checkProposalCompliance,
+  guardrailsFor,
   type Actor,
   type AdGroup,
   type AdMetricsDaily,
@@ -16,12 +19,16 @@ import {
   type ProposalRisk,
   type SellerAccount,
   type Target,
+  type Workspace,
 } from "@app/core";
 import { AgentRunError, type DateRange } from "../data-source";
+import { assertAgentsRunning, fileWithAutonomy, finalStep } from "./autonomy";
 import { adPerformance, countPlanChanges, formatMoney, percent, planCampaignOptimizerRun } from "./campaign-optimizer";
 
 /** What a campaign optimizer run reads about one campaign and its seller account. */
 export type CampaignRunStore = {
+  /** For the kill switch. */
+  workspace: Workspace | undefined;
   /** The member starting the run, when there is one. */
   members: readonly Member[];
   account: SellerAccount | undefined;
@@ -59,6 +66,7 @@ export function startCampaignOptimizerRun(
   if (!member || !canActOnAccount(member, { workspaceId: account.workspaceId, sellerAccountId: account.id })) {
     throw new AgentRunError("forbidden", "You don't have permission to run agents on this account.");
   }
+  assertAgentsRunning(store.workspace);
   if (campaign.state !== "enabled") throw new AgentRunError("conflict", "Only enabled campaigns can be optimized.");
   if (!store.window) throw new AgentRunError("conflict", "This campaign has no ad metrics to work from yet.");
   if (store.runningRuns.length > 0) throw new AgentRunError("conflict", "The optimizer is already running on this campaign.");
@@ -113,6 +121,7 @@ export function completeCampaignOptimizerRun(
   if (!account || !campaign || campaign.id !== run.subject.id) {
     throw new AgentRunError("not_found", "The campaign this run worked on is no longer available.");
   }
+  assertAgentsRunning(store.workspace);
 
   const diff = (run.steps ?? []).flatMap((step) => (step.kind === "plan" ? step.changes : []));
   const optimizer: Actor = { type: "agent", agent: "campaign_optimizer", agentRunId: run.id };
@@ -171,23 +180,27 @@ export function completeCampaignOptimizerRun(
     createdAt: at,
   });
 
+  const checks = checkProposalCompliance({ type: "campaign_plan", diff, guardrails: guardrailsFor(account) });
+  const filed = fileWithAutonomy(proposal, autonomyFor(account, "campaign_plan"), checks, at);
+  const filedProposal = filed.outcome === "suggested" ? undefined : filed.proposal;
   const finished = AgentRunSchema.parse({
     ...run,
     status: "succeeded",
     finishedAt: at,
-    summary: `Planned ${plural(diff.length, "change")} for ${campaign.name}.`,
-    proposalIds: [proposal.id],
-    steps: run.steps?.map((step) => (step.kind === "awaiting_approval" ? { ...step, proposalId: proposal.id } : step)),
+    summary: filedProposal
+      ? `Planned ${plural(diff.length, "change")} for ${campaign.name}.`
+      : `Suggested ${plural(diff.length, "change")} for ${campaign.name}; L0 files nothing.`,
+    proposalIds: filedProposal ? [filedProposal.id] : [],
+    steps: finalStep(run.steps, filed, "campaign plans"),
   });
-
-  return {
-    run: finished,
-    proposal,
-    events: [
-      { ...base, action: "agent_run.finished", entity: { type: "agent_run", id: run.id }, metadata: { status: "succeeded", proposals: 1 } },
-      { ...base, action: "proposal.created", entity: { type: "proposal", id: proposal.id }, metadata: { type: proposal.type, risk } },
-    ],
+  const ran: AuditDraft = {
+    ...base,
+    action: "agent_run.finished",
+    entity: { type: "agent_run", id: run.id },
+    metadata: { status: "succeeded", proposals: filedProposal ? 1 : 0 },
   };
+  if (filed.outcome === "suggested") return { run: finished, events: [ran] };
+  return { run: finished, proposal: filed.proposal, events: [ran, ...filed.events] };
 }
 
 function plural(count: number, noun: string): string {

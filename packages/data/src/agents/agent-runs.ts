@@ -3,7 +3,9 @@ import {
   ListingVersionSchema,
   ProposalSchema,
   ReviewSchema,
+  autonomyFor,
   canActOnAccount,
+  checkProposalCompliance,
   type Actor,
   type AgentRun,
   type AuditEvent,
@@ -16,12 +18,16 @@ import {
   type ProposalRisk,
   type Review,
   type SellerAccount,
+  type Workspace,
 } from "@app/core";
 import { AgentRunError } from "../data-source";
+import { assertAgentsRunning, fileWithAutonomy, finalStep } from "./autonomy";
 import { planListingOptimizerRun } from "./listing-optimizer";
 
 /** The parts of the mock's in-memory store that agent runs read. */
 export type RunStore = {
+  /** For the kill switch. */
+  workspaces: readonly Workspace[];
   members: readonly Member[];
   sellerAccounts: readonly SellerAccount[];
   products: readonly Product[];
@@ -47,6 +53,7 @@ export function startListingOptimizerRun(
   const facts = store.productFacts.find((candidate) => candidate.productId === productId);
   const live = store.liveListing(productId);
   if (!product || !account || !facts || !live) throw new AgentRunError("not_found", "That product has no live listing to optimize.");
+  assertAgentsRunning(store.workspaces.find((workspace) => workspace.id === account.workspaceId));
 
   const member = store.members.find((candidate) => candidate.id === memberId);
   if (!member || !canActOnAccount(member, { workspaceId: account.workspaceId, sellerAccountId: account.id })) {
@@ -97,13 +104,14 @@ export function startListingOptimizerRun(
 
 /**
  * Files a running optimizer run's output: the revised draft as a proposed ListingVersion, the last
- * reviewer round as its Review, and a pending listing_update Proposal. Nothing goes live here.
+ * reviewer round as its Review, and a listing_update Proposal, as the account's autonomy allows: at
+ * L0 nothing is filed, at L2/L3 the proposal may be approved by the system. Nothing goes live here.
  */
 export function completeListingOptimizerRun(
   store: RunStore,
   run: AgentRun,
   at: string,
-): { run: AgentRun; version: ListingVersion; review: Review; proposal: Proposal; events: AuditDraft[] } {
+): { run: AgentRun; version?: ListingVersion; review?: Review; proposal?: Proposal; events: AuditDraft[] } {
   if (run.agent !== "listing_writer" || run.subject?.type !== "product") {
     throw new AgentRunError("conflict", "Only listing optimizer runs can be completed here.");
   }
@@ -117,6 +125,8 @@ export function completeListingOptimizerRun(
   if (!product || !facts || !live || !finalDraft || !finalReview) {
     throw new AgentRunError("not_found", "The product this run worked on is no longer available.");
   }
+  assertAgentsRunning(store.workspaces.find((workspace) => workspace.id === run.workspaceId));
+  const account = store.sellerAccounts.find((candidate) => candidate.id === run.sellerAccountId);
 
   const writer: Actor = { type: "agent", agent: "listing_writer", agentRunId: run.id };
   const reviewer: Actor = { type: "agent", agent: "listing_reviewer", agentRunId: run.id };
@@ -176,26 +186,32 @@ export function completeListingOptimizerRun(
     createdAt: at,
   });
 
+  const level = autonomyFor(account ?? { autonomyLevel: run.autonomyLevel }, "listing_update");
+  const checks = checkProposalCompliance({ type: "listing_update", diff, liveListing: live, facts });
+  const filed = fileWithAutonomy(proposal, level, checks, at);
+  const filedProposal = filed.outcome === "suggested" ? undefined : filed.proposal;
   const finished = AgentRunSchema.parse({
     ...run,
     status: "succeeded",
     finishedAt: at,
-    summary: `Drafted 1 listing update after ${reviewRounds.length} review rounds.`,
-    proposalIds: [proposal.id],
-    steps: run.steps?.map((step) => (step.kind === "awaiting_approval" ? { ...step, proposalId: proposal.id } : step)),
+    summary: filedProposal
+      ? `Drafted 1 listing update after ${reviewRounds.length} review rounds.`
+      : `Suggested a listing rewrite after ${reviewRounds.length} review rounds; L0 files nothing.`,
+    proposalIds: filedProposal ? [filedProposal.id] : [],
+    steps: finalStep(run.steps, filed, "listing updates"),
   });
 
-  const base = { workspaceId: run.workspaceId, sellerAccountId: run.sellerAccountId, at, actor: writer };
-  return {
-    run: finished,
-    version,
-    review,
-    proposal,
-    events: [
-      { ...base, action: "agent_run.finished", entity: { type: "agent_run", id: run.id }, metadata: { status: "succeeded", proposals: 1 } },
-      { ...base, action: "proposal.created", entity: { type: "proposal", id: proposal.id }, metadata: { type: proposal.type, risk } },
-    ],
+  const ran = {
+    workspaceId: run.workspaceId,
+    sellerAccountId: run.sellerAccountId,
+    at,
+    actor: writer,
+    action: "agent_run.finished" as const,
+    entity: { type: "agent_run" as const, id: run.id },
+    metadata: { status: "succeeded", proposals: filedProposal ? 1 : 0 },
   };
+  if (filed.outcome === "suggested") return { run: finished, events: [ran] };
+  return { run: finished, version, review, proposal: filed.proposal, events: [ran, ...filed.events] };
 }
 
 function keywordsGained(keywords: string[], live: ListingVersion, next: ListingVersion): string[] {

@@ -125,9 +125,21 @@ export async function resetMutableTables(admin: AppSupabaseClient, dataset: Mock
   // Proposals point at reviews, and reviews at listing versions.
   for (const table of ["proposals", "agent_runs", "audit_events", "reviews", "listing_versions"] as const) await clear(table);
   for (const table of MUTABLE_TABLES) await insertAll(admin, table, rows[table]);
-  // Workspaces can't be cleared without cascading to everything, so only their branding goes back.
+
+  // Settings live on rows that can't be cleared without cascading to everything: put their
+  // settings columns back, and drop accounts and members the tests added.
+  const check = ({ error }: { error: { message: string } | null }, what: string) => {
+    if (error) throw new Error(`Restoring ${what} failed: ${error.message}`);
+  };
   for (const workspace of rows.workspaces) {
-    const { error } = await admin.from("workspaces").update({ branding: workspace.branding ?? null }).eq("id", workspace.id);
-    if (error) throw new Error(`Restoring branding of ${workspace.id} failed: ${error.message}`);
+    const { branding = null, agents_paused_at = null, agents_paused_by = null } = workspace;
+    check(await admin.from("workspaces").update({ branding, agents_paused_at, agents_paused_by }).eq("id", workspace.id), `workspace ${workspace.id}`);
   }
+  check(await admin.from("seller_accounts").delete().not("id", "in", `(${rows.seller_accounts.map((row) => row.id).join(",")})`), "seller accounts");
+  for (const account of rows.seller_accounts) {
+    const { autonomy_level, autonomy_by_action = null, guardrails = null } = account;
+    check(await admin.from("seller_accounts").update({ autonomy_level, autonomy_by_action, guardrails }).eq("id", account.id), `seller account ${account.id}`);
+  }
+  check(await admin.from("members").delete().not("id", "in", `(${rows.members.map((row) => row.id).join(",")})`), "members");
+  check(await admin.from("members").upsert(rows.members), "members");
 }

@@ -65,11 +65,21 @@ export const workspaceToRow = (workspace: Workspace): TablesInsert<"workspaces">
   kind: workspace.kind,
   created_at: workspace.createdAt,
   branding: workspace.branding ?? null,
+  agents_paused_at: workspace.agentsPausedAt ?? null,
+  agents_paused_by: workspace.agentsPausedBy ?? null,
 });
 
 export const workspaceFromRow = (row: Tables<"workspaces">): Workspace =>
   WorkspaceSchema.parse(
-    compact({ id: row.id, name: row.name, kind: row.kind, createdAt: iso(row.created_at), branding: row.branding ?? undefined }),
+    compact({
+      id: row.id,
+      name: row.name,
+      kind: row.kind,
+      createdAt: iso(row.created_at),
+      branding: row.branding ?? undefined,
+      agentsPausedAt: row.agents_paused_at ? iso(row.agents_paused_at) : undefined,
+      agentsPausedBy: row.agents_paused_by ?? undefined,
+    }),
   );
 
 export const memberToRow = (member: Member): TablesInsert<"members"> => ({
@@ -101,22 +111,28 @@ export const sellerAccountToRow = (account: SellerAccount): TablesInsert<"seller
   marketplace: account.marketplace,
   currency: account.currency,
   autonomy_level: account.autonomyLevel,
+  autonomy_by_action: account.autonomyByAction ?? null,
+  guardrails: account.guardrails ?? null,
   target_acos: account.targetAcos,
   connected_at: account.connectedAt,
 });
 
 export const sellerAccountFromRow = (row: Tables<"seller_accounts">): SellerAccount =>
-  SellerAccountSchema.parse({
-    id: row.id,
-    workspaceId: row.workspace_id,
-    name: row.name,
-    sellerId: row.seller_id,
-    marketplace: row.marketplace,
-    currency: row.currency,
-    autonomyLevel: row.autonomy_level,
-    targetAcos: row.target_acos,
-    connectedAt: iso(row.connected_at),
-  });
+  SellerAccountSchema.parse(
+    compact({
+      id: row.id,
+      workspaceId: row.workspace_id,
+      name: row.name,
+      sellerId: row.seller_id,
+      marketplace: row.marketplace,
+      currency: row.currency,
+      autonomyLevel: row.autonomy_level,
+      autonomyByAction: row.autonomy_by_action ?? undefined,
+      guardrails: row.guardrails ?? undefined,
+      targetAcos: row.target_acos,
+      connectedAt: iso(row.connected_at),
+    }),
+  );
 
 // Catalog
 
