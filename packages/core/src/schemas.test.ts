@@ -7,7 +7,14 @@ import { isAgentProduced } from "./common";
 import { MetricsDailySchema } from "./metrics";
 import { ProposalSchema, type Proposal } from "./proposal";
 import { overallScore } from "./review";
-import { MemberSchema, SellerAccountSchema } from "./workspace";
+import {
+  BrandingSchema,
+  DEFAULT_BRANDING,
+  LOGO_MAX_LENGTH,
+  MemberSchema,
+  SellerAccountSchema,
+  readableTextColor,
+} from "./workspace";
 
 const at = "2026-10-30T12:00:00.000Z";
 
@@ -15,6 +22,28 @@ describe("AutonomyLevelSchema", () => {
   it("only allows L0–L3", () => {
     expect(AutonomyLevelSchema.options).toEqual(["L0", "L1", "L2", "L3"]);
     expect(AutonomyLevelSchema.safeParse("L4").success).toBe(false);
+  });
+});
+
+describe("BrandingSchema", () => {
+  const branding = { displayName: "Brightpath Growth", primaryColor: "#0f3d3e", accentColor: "#e0a100" };
+
+  it("accepts colors and an image data URL or https logo", () => {
+    expect(BrandingSchema.safeParse({ ...branding, logo: "data:image/png;base64,iVBORw0KGgo=" }).success).toBe(true);
+    expect(BrandingSchema.safeParse({ ...branding, logo: "https://cdn.example.com/logo.svg" }).success).toBe(true);
+  });
+
+  it("rejects other logos, bad colors and oversized images", () => {
+    expect(BrandingSchema.safeParse({ ...branding, logo: "data:text/html;base64,PHA+" }).success).toBe(false);
+    expect(BrandingSchema.safeParse({ ...branding, logo: "http://example.com/logo.png" }).success).toBe(false);
+    expect(BrandingSchema.safeParse({ ...branding, primaryColor: "teal" }).success).toBe(false);
+    expect(BrandingSchema.safeParse({ ...branding, logo: `data:image/png;base64,${"A".repeat(LOGO_MAX_LENGTH)}` }).success).toBe(false);
+  });
+
+  it("picks the header text color with the better contrast", () => {
+    expect(readableTextColor("#0f3d3e")).toBe("#ffffff");
+    expect(readableTextColor("#f5d76e")).toBe("#0b0b0b");
+    expect(readableTextColor(DEFAULT_BRANDING.primaryColor)).toBe("#ffffff");
   });
 });
 

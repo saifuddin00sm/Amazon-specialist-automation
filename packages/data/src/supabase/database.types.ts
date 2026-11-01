@@ -279,14 +279,14 @@ isOneToOne: false
                   ]
                 },"workspaces": {
                   Row: {
-                    "created_at": string,"id": string,"kind": Database["public"]['Enums']["workspace_kind"],"name": string
+                    "branding": Json | null,"created_at": string,"id": string,"kind": Database["public"]['Enums']["workspace_kind"],"name": string
                   }
                   ComputedFields: never
                   Insert: {
-                    "created_at"?: string,"id": string,"kind": Database["public"]['Enums']["workspace_kind"],"name": string
+                    "branding"?: Json | null,"created_at"?: string,"id": string,"kind": Database["public"]['Enums']["workspace_kind"],"name": string
                   }
                   Update: {
-                    "created_at"?: string,"id"?: string,"kind"?: Database["public"]['Enums']["workspace_kind"],"name"?: string
+                    "branding"?: Json | null,"created_at"?: string,"id"?: string,"kind"?: Database["public"]['Enums']["workspace_kind"],"name"?: string
                   }
                   Relationships: [
                     
@@ -308,6 +308,9 @@ isOneToOne: false
                            },
 "start_agent_run":
 { Args: { "p_events": Json,"p_run": Json }; Returns: undefined
+                           },
+"update_workspace_branding":
+{ Args: { "p_branding": Json,"p_events": Json,"p_workspace_id": string }; Returns: boolean
                            }
           }
           Enums: {

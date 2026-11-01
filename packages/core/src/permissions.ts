@@ -9,6 +9,11 @@ export function canActOnAccount(member: Member, { workspaceId, sellerAccountId }
   return member.sellerAccountIds.length === 0 || member.sellerAccountIds.includes(sellerAccountId);
 }
 
+/** Only owners change workspace settings, such as report branding. */
+export function canManageWorkspace(member: Member, workspaceId: string): boolean {
+  return member.workspaceId === workspaceId && member.role === "owner";
+}
+
 export function canDecideProposal(member: Member, proposal: Pick<Proposal, "workspaceId" | "sellerAccountId">): boolean {
   return canActOnAccount(member, proposal);
 }
