@@ -27,6 +27,10 @@
     },
     "test:e2e": {
       "cache": false
+    },
+    "@app/data#test": {
+      "outputs": [],
+      "cache": false
     }
   }
 }
