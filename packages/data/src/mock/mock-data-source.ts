@@ -28,6 +28,7 @@ import {
 } from "../settings-writes";
 import { completeListingOptimizerRun, startListingOptimizerRun } from "../agents/agent-runs";
 import { randomSellerId } from "../seller-id";
+import { scopeToMember, type AccountLookups } from "./member-scope";
 import { generateMockDataset, type MockDataset } from "./generate";
 
 export type MockDataSourceOptions = {
@@ -39,7 +40,7 @@ export type MockDataSourceOptions = {
  * Serves a generated dataset from memory. Records are frozen so callers can't mutate them; writes
  * replace records copy-on-write and append AuditEvents, like a real backend would.
  */
-export function createMockDataSource(dataset: MockDataset, { now = () => new Date() }: MockDataSourceOptions = {}): DataSource {
+export function createMockDataSource(dataset: MockDataset, { now = () => new Date() }: MockDataSourceOptions = {}): MockDataSource {
   deepFreeze(dataset);
   const workspaces = [...dataset.workspaces];
   const members = [...dataset.members];
@@ -170,7 +171,7 @@ export function createMockDataSource(dataset: MockDataset, { now = () => new Dat
     nextId,
   });
 
-  return {
+  const source: DataSource = {
     async listWorkspaces() {
       return [...workspaces];
     },
@@ -425,17 +426,45 @@ export function createMockDataSource(dataset: MockDataset, { now = () => new Dat
       );
     },
   };
+
+  const accountOfProduct = (id: string) => byId(dataset.products, id)?.sellerAccountId;
+  const accountOfListingVersion = (id: string) => accountOfProduct(byId(listingVersions, id)?.productId ?? "");
+  const accountOfCampaign = (id: string) => byId(dataset.campaigns, id)?.sellerAccountId;
+  const accountOfAdGroup = (id: string) => accountOfCampaign(byId(dataset.adGroups, id)?.campaignId ?? "");
+  const lookups: AccountLookups = {
+    members: () => members,
+    sellerAccounts: () => sellerAccounts,
+    product: accountOfProduct,
+    listingVersion: accountOfListingVersion,
+    review: (id) => accountOfListingVersion(byId(reviews, id)?.listingVersionId ?? ""),
+    campaign: accountOfCampaign,
+    adGroup: accountOfAdGroup,
+    target: (id) => accountOfAdGroup(byId(dataset.targets, id)?.adGroupId ?? ""),
+  };
+
+  return Object.assign(source, {
+    asMember(memberId: string) {
+      const member = byId(members, memberId);
+      return member && scopeToMember(source, member, lookups);
+    },
+  });
 }
+
+/** The mock, plus views of it as one member sees it (its stand-in for row-level security). */
+export type MockDataSource = DataSource & {
+  /** The data as `memberId` sees it, acting as them. Undefined for an unknown member. */
+  asMember(memberId: string): DataSource | undefined;
+};
 
 // Kept on globalThis so dev-server reloads of other modules don't throw away writes made so far.
 // Tagged with the factory that built it: when this module itself reloads (its code changed), the
 // factory is new and the source is rebuilt, so the dev server never serves an outdated implementation.
 const globalStore = globalThis as typeof globalThis & {
-  __mockDataSource?: { source: DataSource; factory: typeof createMockDataSource };
+  __mockDataSource?: { source: MockDataSource; factory: typeof createMockDataSource };
 };
 
 /** Phase 1 data source over the default seeded dataset, generated on first use. */
-export function getMockDataSource(): DataSource {
+export function getMockDataSource(): MockDataSource {
   if (globalStore.__mockDataSource?.factory !== createMockDataSource) {
     globalStore.__mockDataSource = { source: createMockDataSource(generateMockDataset()), factory: createMockDataSource };
   }

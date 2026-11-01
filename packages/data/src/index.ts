@@ -33,7 +33,7 @@ export {
   type GenerateOptions,
   type MockDataset,
 } from "./mock/generate";
-export { createMockDataSource, getMockDataSource, type MockDataSourceOptions } from "./mock/mock-data-source";
+export { createMockDataSource, getMockDataSource, type MockDataSource, type MockDataSourceOptions } from "./mock/mock-data-source";
 export { ProposalWriteError, type ProposalWriteErrorCode } from "./proposal-writes";
 export type { Database } from "./supabase/database.types";
 export {

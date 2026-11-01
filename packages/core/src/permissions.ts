@@ -3,10 +3,23 @@ import type { Member } from "./workspace";
 
 type AccountScope = { workspaceId: string; sellerAccountId: string };
 
-/** Owners, specialists and client approvers act on accounts they can see. Viewers never do. */
-export function canActOnAccount(member: Member, { workspaceId, sellerAccountId }: AccountScope): boolean {
-  if (member.workspaceId !== workspaceId || member.role === "viewer") return false;
+/**
+ * Every member sees their workspace; one scoped to some accounts (a client approver) sees only
+ * those. Mirrors the row-level security policies in supabase/migrations.
+ */
+export function canSeeAccount(member: Member, { workspaceId, sellerAccountId }: AccountScope): boolean {
+  if (member.workspaceId !== workspaceId) return false;
   return member.sellerAccountIds.length === 0 || member.sellerAccountIds.includes(sellerAccountId);
+}
+
+/** Workspace-wide records (members, settings events) are for members who see every account. */
+export function seesWholeWorkspace(member: Member, workspaceId: string): boolean {
+  return member.workspaceId === workspaceId && member.sellerAccountIds.length === 0;
+}
+
+/** Owners, specialists and client approvers act on accounts they can see. Viewers never do. */
+export function canActOnAccount(member: Member, scope: AccountScope): boolean {
+  return member.role !== "viewer" && canSeeAccount(member, scope);
 }
 
 /** Only owners change workspace settings, such as report branding. */
