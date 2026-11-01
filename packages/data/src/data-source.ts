@@ -69,6 +69,9 @@ export type AgentRunQuery = ActivityQuery & {
   subjectId?: string;
 };
 
+/** The newest Review of a product's live listing. */
+export type LiveListingReview = { productId: string; review: Review };
+
 export type StartListingOptimizerInput = { productId: string; memberId: string };
 
 export type AgentRunErrorCode = "not_found" | "forbidden" | "conflict";
@@ -102,6 +105,8 @@ export interface DataSource {
   /** Newest first. */
   listReviews(listingVersionId: string): Promise<Review[]>;
   getReview(id: string): Promise<Review | undefined>;
+  /** The newest Review of each live listing in the account, by product id. Unreviewed listings are left out. */
+  listLiveListingReviews(sellerAccountId: string): Promise<LiveListingReview[]>;
 
   /** Newest first. */
   listProposals(query: ProposalQuery): Promise<Proposal[]>;
@@ -127,6 +132,8 @@ export interface DataSource {
   listMetricsDaily<T extends MetricsEntityType>(
     query: MetricsQuery<T>,
   ): Promise<Extract<MetricsDaily, { entityType: T }>[]>;
+  /** First and last day the account has metrics for; undefined when it has none. */
+  getMetricsDateRange(sellerAccountId: string): Promise<DateRange | undefined>;
 
   /** Newest first. */
   listAgentRuns(query: AgentRunQuery): Promise<AgentRun[]>;

@@ -1,6 +1,6 @@
 import { checkProposalCompliance, type AuditEvent, type ListingVersion, type MetricsDaily, type Proposal } from "@app/core";
 import type { PostgrestError, SupabaseClient } from "@supabase/supabase-js";
-import { AgentRunError, type DataSource } from "../data-source";
+import { AgentRunError, type DataSource, type LiveListingReview } from "../data-source";
 import { completeListingOptimizerRun, startListingOptimizerRun, type RunStore } from "../agents/agent-runs";
 import {
   ProposalWriteError,
@@ -250,6 +250,24 @@ export function createSupabaseDataSource(
       ).map(reviewFromRow);
     },
     getReview,
+    async listLiveListingReviews(sellerAccountId) {
+      const rows = await selectAll((from, to) =>
+        db
+          .from("reviews")
+          .select("*, listing_versions!inner(product_id)")
+          .eq("seller_account_id", sellerAccountId)
+          .eq("listing_versions.status", "live")
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: false })
+          .range(from, to),
+      );
+      // Newest first, so the first row seen for a listing is its newest review.
+      const newest = new Map<string, LiveListingReview>();
+      for (const { listing_versions: version, ...row } of rows) {
+        if (!newest.has(row.listing_version_id)) newest.set(row.listing_version_id, { productId: version.product_id, review: reviewFromRow(row) });
+      }
+      return [...newest.values()].sort((a, b) => a.productId.localeCompare(b.productId));
+    },
 
     async listProposals({ workspaceId, sellerAccountId, status, type, snoozed }) {
       const at = now().toISOString();
@@ -326,6 +344,14 @@ export function createSupabaseDataSource(
         return query.order("date").order("entity_id").range(from, to);
       });
       return rows.map((row) => metricsDailyFromRow(row) as Extract<MetricsDaily, { entityType: T }>);
+    },
+    async getMetricsDateRange(sellerAccountId) {
+      const edge = async (ascending: boolean) =>
+        must(
+          await db.from("metrics_daily").select("date").eq("seller_account_id", sellerAccountId).order("date", { ascending }).limit(1).maybeSingle(),
+        )?.date;
+      const [from, to] = await Promise.all([edge(true), edge(false)]);
+      return from && to ? { from, to } : undefined;
     },
 
     async listAgentRuns({ workspaceId, sellerAccountId, subjectId, limit }) {

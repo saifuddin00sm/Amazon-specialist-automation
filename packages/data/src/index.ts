@@ -6,6 +6,7 @@ export type {
   ApproveProposalInput,
   DataSource,
   DateRange,
+  LiveListingReview,
   MetricsQuery,
   ProductQuery,
   ProposalQuery,

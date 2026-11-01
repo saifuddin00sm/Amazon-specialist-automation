@@ -130,6 +130,39 @@ export function describeDataSourceContract(
         expect(rows).toHaveLength(expected.length);
       });
 
+      it("returns each account's target ACoS", async () => {
+        const accounts = await reader().listSellerAccounts();
+        expect(accounts.map((account) => account.targetAcos)).toEqual(dataset().sellerAccounts.map((account) => account.targetAcos));
+        expect(await reader().getSellerAccount(merchantAccount().id)).toEqual(merchantAccount());
+      });
+
+      it("returns the newest review of each live listing", async () => {
+        const { products, listingVersions, reviews } = dataset();
+        const accountProducts = new Set(products.filter((p) => p.sellerAccountId === merchantAccount().id).map((p) => p.id));
+        const expected = listingVersions
+          .filter((version) => version.status === "live" && accountProducts.has(version.productId))
+          .flatMap((version) => {
+            const [review] = reviews
+              .filter((candidate) => candidate.listingVersionId === version.id)
+              .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id));
+            return review ? [{ productId: version.productId, review }] : [];
+          })
+          .sort((a, b) => a.productId.localeCompare(b.productId));
+
+        expect(expected.length).toBeGreaterThan(0);
+        expect(await reader().listLiveListingReviews(merchantAccount().id)).toEqual(expected);
+        expect(await reader().listLiveListingReviews("nope")).toEqual([]);
+      });
+
+      it("reports the days an account has metrics for", async () => {
+        const dates = dataset()
+          .metricsDaily.filter((row) => row.sellerAccountId === merchantAccount().id)
+          .map((row) => row.date)
+          .sort();
+        expect(await reader().getMetricsDateRange(merchantAccount().id)).toEqual({ from: dates[0], to: dates.at(-1) });
+        expect(await reader().getMetricsDateRange("nope")).toBeUndefined();
+      });
+
       it("limits activity feeds", async () => {
         const { merchant } = workspaces();
         expect(await reader().listAuditEvents({ workspaceId: merchant.id, limit: 10 })).toHaveLength(10);

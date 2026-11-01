@@ -132,6 +132,18 @@ export function createMockDataSource(dataset: MockDataset, { now = () => new Dat
     async getReview(id) {
       return byId(reviews, id);
     },
+    async listLiveListingReviews(sellerAccountId) {
+      const accountProducts = new Set(
+        dataset.products.filter((product) => product.sellerAccountId === sellerAccountId).map((product) => product.id),
+      );
+      return listingVersions
+        .filter((version) => version.status === "live" && accountProducts.has(version.productId))
+        .flatMap((version) => {
+          const review = newestFirst(reviews.filter((candidate) => candidate.listingVersionId === version.id))[0];
+          return review ? [{ productId: version.productId, review }] : [];
+        })
+        .sort((a, b) => a.productId.localeCompare(b.productId));
+    },
 
     async listProposals({ workspaceId, sellerAccountId, status, type, snoozed }) {
       const at = now().toISOString();
@@ -203,6 +215,11 @@ export function createMockDataSource(dataset: MockDataset, { now = () => new Dat
         )
         .sort((a, b) => a.date.localeCompare(b.date));
     },
+    async getMetricsDateRange(sellerAccountId) {
+      const dates = dataset.metricsDaily.filter((row) => row.sellerAccountId === sellerAccountId).map((row) => row.date);
+      if (dates.length === 0) return undefined;
+      return { from: dates.reduce((a, b) => (b < a ? b : a)), to: dates.reduce((a, b) => (b > a ? b : a)) };
+    },
 
     async listAgentRuns({ workspaceId, sellerAccountId, subjectId, limit }) {
       return limited(
@@ -266,6 +283,11 @@ export function getMockDataSource(): DataSource {
     globalStore.__mockDataSource = { source: createMockDataSource(generateMockDataset()), factory: createMockDataSource };
   }
   return globalStore.__mockDataSource.source;
+}
+
+/** Newest `createdAt` first; ties go to the higher id, like the Supabase ordering. */
+function newestFirst<T extends { id: string; createdAt: string }>(items: T[]): T[] {
+  return [...items].sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id));
 }
 
 /** Continues `prefix_0001`-style ids after the highest one already used. */
