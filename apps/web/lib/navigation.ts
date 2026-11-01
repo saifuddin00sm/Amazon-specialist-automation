@@ -44,7 +44,7 @@ export const mainNav: NavItem[] = [
     title: "Reports",
     href: "/reports",
     icon: ChartColumn,
-    description: "Performance reports across accounts and marketplaces.",
+    description: "Weekly reports with your branding, ready to print or save as PDF.",
   },
 ];
 
