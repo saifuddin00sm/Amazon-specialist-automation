@@ -1,6 +1,3 @@
-import type { DataSource } from "./data-source";
-import { getMockDataSource } from "./mock/mock-data-source";
-
 export { AgentRunError } from "./data-source";
 export type {
   ActivityQuery,
@@ -24,7 +21,7 @@ export {
   type GenerateOptions,
   type MockDataset,
 } from "./mock/generate";
-export { createMockDataSource, type MockDataSourceOptions } from "./mock/mock-data-source";
+export { createMockDataSource, getMockDataSource, type MockDataSourceOptions } from "./mock/mock-data-source";
 export { ProposalWriteError, type ProposalWriteErrorCode } from "./proposal-writes";
 export type { Database } from "./supabase/database.types";
 export {
@@ -34,7 +31,3 @@ export {
   type SupabaseDataSourceOptions,
 } from "./supabase/supabase-data-source";
 
-/** Phase 1: always the mock. Swap the implementation here when real backends land. */
-export function getDataSource(): DataSource {
-  return getMockDataSource();
-}

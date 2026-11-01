@@ -1,8 +1,9 @@
 "use server";
 
-import { AgentRunError, getDataSource } from "@app/data";
+import { AgentRunError } from "@app/data";
 import { refresh } from "next/cache";
 import { z } from "zod";
+import { getDataSource } from "@/lib/data";
 
 export type RunActionResult = { ok: true; runId: string; proposalId?: string } | { ok: false; message: string };
 
@@ -14,7 +15,7 @@ export async function startListingOptimizer(input: z.input<typeof StartInput>): 
   const parsed = StartInput.safeParse(input);
   if (!parsed.success) return { ok: false, message: "Invalid request." };
 
-  const dataSource = getDataSource();
+  const dataSource = await getDataSource();
   const product = await dataSource.getProduct(parsed.data.productId);
   const account = product && (await dataSource.getSellerAccount(product.sellerAccountId));
   const member = account && (await dataSource.getActingMember(account.workspaceId));
@@ -35,7 +36,7 @@ export async function completeOptimizerRun(input: z.input<typeof CompleteInput>)
   if (!parsed.success) return { ok: false, message: "Invalid request." };
 
   return runWrite(async () => {
-    const { run, proposal } = await getDataSource().completeAgentRun(parsed.data.runId);
+    const { run, proposal } = await (await getDataSource()).completeAgentRun(parsed.data.runId);
     return { ok: true, runId: run.id, proposalId: proposal?.id };
   });
 }

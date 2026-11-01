@@ -8,7 +8,8 @@ import {
   type Review,
   type SellerAccount,
 } from "@app/core";
-import { getDataSource, type DataSource } from "@app/data";
+import type { DataSource } from "@app/data";
+import { getDataSource } from "@/lib/data";
 import { targetLabel } from "@/lib/format";
 
 /** Everything the approvals UI needs to show and decide one proposal. */
@@ -35,7 +36,7 @@ export type ApprovalsData = {
 
 /** Pending proposals across every workspace; the client narrows to the selected one. */
 export async function loadApprovals(): Promise<ApprovalsData> {
-  const dataSource = getDataSource();
+  const dataSource = await getDataSource();
   const [workspaces, accounts] = await Promise.all([dataSource.listWorkspaces(), dataSource.listSellerAccounts()]);
   const accountById = new Map(accounts.map((account) => [account.id, account]));
 

@@ -1,9 +1,10 @@
 "use server";
 
 import { DECISION_NOTE_MAX_LENGTH, DiffEditSchema } from "@app/core";
-import { ProposalWriteError, getDataSource } from "@app/data";
+import { ProposalWriteError } from "@app/data";
 import { refresh } from "next/cache";
 import { z } from "zod";
+import { getDataSource } from "@/lib/data";
 
 export type ActionResult = {
   /** Proposals the write went through for. */
@@ -23,21 +24,21 @@ export async function approveProposals(input: z.input<typeof ApproveInput>): Pro
   const parsed = ApproveInput.safeParse(input);
   if (!parsed.success) return invalid(input, parsed.error);
   const { ids, note } = parsed.data;
-  return forEachProposal(ids, (proposalId, memberId) => getDataSource().approveProposal({ proposalId, memberId, note }));
+  return forEachProposal(ids, async (proposalId, memberId) => (await getDataSource()).approveProposal({ proposalId, memberId, note }));
 }
 
 export async function approveProposalWithEdits(input: z.input<typeof ApproveWithEditsInput>): Promise<ActionResult> {
   const parsed = ApproveWithEditsInput.safeParse(input);
   if (!parsed.success) return invalid({ ids: [input.id] }, parsed.error);
   const { id, edits, note } = parsed.data;
-  return forEachProposal([id], (proposalId, memberId) => getDataSource().approveProposal({ proposalId, memberId, note, edits }));
+  return forEachProposal([id], async (proposalId, memberId) => (await getDataSource()).approveProposal({ proposalId, memberId, note, edits }));
 }
 
 export async function rejectProposals(input: z.input<typeof RejectInput>): Promise<ActionResult> {
   const parsed = RejectInput.safeParse(input);
   if (!parsed.success) return invalid(input, parsed.error);
   const { ids, reason } = parsed.data;
-  return forEachProposal(ids, (proposalId, memberId) => getDataSource().rejectProposal({ proposalId, memberId, reason }));
+  return forEachProposal(ids, async (proposalId, memberId) => (await getDataSource()).rejectProposal({ proposalId, memberId, reason }));
 }
 
 export async function snoozeProposals(input: z.input<typeof SnoozeInput>): Promise<ActionResult> {
@@ -45,7 +46,7 @@ export async function snoozeProposals(input: z.input<typeof SnoozeInput>): Promi
   if (!parsed.success) return invalid(input, parsed.error);
   const { ids, hours } = parsed.data;
   const until = new Date(Date.now() + hours * 60 * 60 * 1000).toISOString();
-  return forEachProposal(ids, (proposalId, memberId) => getDataSource().snoozeProposal({ proposalId, memberId, until }));
+  return forEachProposal(ids, async (proposalId, memberId) => (await getDataSource()).snoozeProposal({ proposalId, memberId, until }));
 }
 
 /**
@@ -56,7 +57,7 @@ async function forEachProposal(
   ids: string[],
   write: (proposalId: string, memberId: string) => Promise<unknown>,
 ): Promise<ActionResult> {
-  const dataSource = getDataSource();
+  const dataSource = await getDataSource();
   const result: ActionResult = { done: [], errors: [] };
 
   for (const proposalId of new Set(ids)) {

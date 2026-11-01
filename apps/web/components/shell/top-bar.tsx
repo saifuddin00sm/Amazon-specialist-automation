@@ -1,10 +1,12 @@
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Separator } from "@/components/ui/separator";
 import { SidebarTrigger } from "@/components/ui/sidebar";
+import type { SignedInUser } from "@/lib/data";
 import { SellerAccountSwitcher } from "./seller-account-switcher";
+import { UserMenu } from "./user-menu";
 import { WorkspaceSwitcher } from "./workspace-switcher";
 
-export function TopBar() {
+export function TopBar({ user }: { user?: SignedInUser }) {
   return (
     <header className="sticky top-0 z-10 flex h-14 shrink-0 items-center gap-2 border-b bg-background px-4">
       <SidebarTrigger className="-ml-1" />
@@ -18,6 +20,7 @@ export function TopBar() {
       </div>
       <div className="ml-auto flex items-center gap-1">
         <ThemeToggle />
+        {user && <UserMenu user={user} />}
       </div>
     </header>
   );

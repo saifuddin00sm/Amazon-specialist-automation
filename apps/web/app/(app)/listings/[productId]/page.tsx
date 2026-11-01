@@ -1,5 +1,4 @@
 import { canActOnAccount, type ListingVersion, type ProductFacts } from "@app/core";
-import { getDataSource } from "@app/data";
 import { ArrowLeft } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
@@ -10,6 +9,7 @@ import { AIGeneratedBadge } from "@/components/ai-generated-badge";
 import { OptimizerPanel } from "@/components/listings/optimizer-panel";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { getDataSource } from "@/lib/data";
 import { formatDateTime, formatMoney } from "@/lib/format";
 
 export const metadata: Metadata = { title: "Product" };
@@ -32,7 +32,7 @@ export default function ProductPage({ params }: PageProps<"/listings/[productId]
 async function ProductView({ params }: { params: PageProps<"/listings/[productId]">["params"] }) {
   await connection();
   const { productId } = await params;
-  const dataSource = getDataSource();
+  const dataSource = await getDataSource();
   const product = await dataSource.getProduct(productId);
   const account = product && (await dataSource.getSellerAccount(product.sellerAccountId));
   if (!product || !account) notFound();
