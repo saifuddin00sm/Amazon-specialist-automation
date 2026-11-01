@@ -26,6 +26,13 @@ export {
 } from "./mock/generate";
 export { createMockDataSource, type MockDataSourceOptions } from "./mock/mock-data-source";
 export { ProposalWriteError, type ProposalWriteErrorCode } from "./proposal-writes";
+export type { Database } from "./supabase/database.types";
+export {
+  SupabaseDataError,
+  createSupabaseDataSource,
+  type AppSupabaseClient,
+  type SupabaseDataSourceOptions,
+} from "./supabase/supabase-data-source";
 
 /** Phase 1: always the mock. Swap the implementation here when real backends land. */
 export function getDataSource(): DataSource {

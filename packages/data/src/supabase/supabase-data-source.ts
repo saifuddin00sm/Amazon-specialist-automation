@@ -1,0 +1,391 @@
+import { checkProposalCompliance, type AuditEvent, type ListingVersion, type MetricsDaily, type Proposal } from "@app/core";
+import type { PostgrestError, SupabaseClient } from "@supabase/supabase-js";
+import { AgentRunError, type DataSource } from "../data-source";
+import { completeListingOptimizerRun, startListingOptimizerRun, type RunStore } from "../agents/agent-runs";
+import {
+  ProposalWriteError,
+  approveProposalWrite,
+  rejectProposalWrite,
+  snoozeProposalWrite,
+  type AuditEventDraft,
+  type ProposalWriteContext,
+  type ProposalWriteResult,
+} from "../proposal-writes";
+import type { Database } from "./database.types";
+import {
+  adGroupFromRow,
+  agentRunFromRow,
+  agentRunToRow,
+  auditEventFromRow,
+  auditEventToRow,
+  campaignFromRow,
+  listingVersionFromRow,
+  listingVersionToRow,
+  memberFromRow,
+  metricsDailyFromRow,
+  productFactsFromRow,
+  productFromRow,
+  proposalFromRow,
+  proposalToRow,
+  reviewFromRow,
+  reviewToRow,
+  sellerAccountFromRow,
+  targetFromRow,
+  workspaceFromRow,
+} from "./rows";
+
+export type AppSupabaseClient = SupabaseClient<Database>;
+
+export type SupabaseDataSourceOptions = {
+  /**
+   * The signed-in auth user. They act as their own member and may only write as that member; row-level
+   * security limits what they see. Leave it out for trusted server work with the secret key (seeding,
+   * tests, background agents): the workspace owner acts, and writes may name any member.
+   */
+  userId?: string;
+  /** Clock for writes and for deciding what is still snoozed. Defaults to the real time. */
+  now?: () => Date;
+};
+
+/** A query the database refused for a reason other than the domain rules. */
+export class SupabaseDataError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "SupabaseDataError";
+  }
+}
+
+/** PostgREST returns at most this many rows per request (config.toml `max_rows`); lists page through. */
+const PAGE_SIZE = 1000;
+const UNIQUE_VIOLATION = "23505";
+
+type Result<T> = { data: T; error: PostgrestError | null };
+
+function must<T>({ data, error }: Result<T>): T {
+  if (error) throw new SupabaseDataError(error.code, error.message);
+  return data;
+}
+
+/** Reads every row of a query, a page at a time, up to `limit`. The query must have a stable order. */
+async function selectAll<T>(page: (from: number, to: number) => PromiseLike<Result<T[] | null>>, limit = Infinity): Promise<T[]> {
+  const rows: T[] = [];
+  while (rows.length < limit) {
+    const from = rows.length;
+    const size = Math.min(PAGE_SIZE, limit - from);
+    const batch = must(await page(from, from + size - 1)) ?? [];
+    rows.push(...batch);
+    if (batch.length < size) break;
+  }
+  return rows;
+}
+
+const newId = (prefix: string) => `${prefix}_${crypto.randomUUID().replaceAll("-", "")}`;
+
+/** Supabase-backed DataSource. Pass a client signed in as the user, or one with the secret key. */
+export function createSupabaseDataSource(
+  client: AppSupabaseClient,
+  { userId, now = () => new Date() }: SupabaseDataSourceOptions = {},
+): DataSource {
+  const db = client;
+
+  const getProposal = async (id: string) => {
+    const row = must(await db.from("proposals").select().eq("id", id).maybeSingle());
+    return row ? proposalFromRow(row) : undefined;
+  };
+  const getReview = async (id: string) => {
+    const row = must(await db.from("reviews").select().eq("id", id).maybeSingle());
+    return row ? reviewFromRow(row) : undefined;
+  };
+  const getProduct = async (id: string) => {
+    const row = must(await db.from("products").select().eq("id", id).maybeSingle());
+    return row ? productFromRow(row) : undefined;
+  };
+  const getProductFacts = async (productId: string) => {
+    const row = must(await db.from("product_facts").select().eq("product_id", productId).maybeSingle());
+    return row ? productFactsFromRow(row) : undefined;
+  };
+  const listListingVersions = async (productId: string) =>
+    (
+      await selectAll((from, to) =>
+        db.from("listing_versions").select().eq("product_id", productId).order("version", { ascending: false }).range(from, to),
+      )
+    ).map(listingVersionFromRow);
+  const getAgentRun = async (id: string) => {
+    const row = must(await db.from("agent_runs").select().eq("id", id).maybeSingle());
+    return row ? agentRunFromRow(row) : undefined;
+  };
+
+  /** The member writing, if this caller may write as them. */
+  const writingMember = async (memberId: string) => {
+    const row = must(await db.from("members").select().eq("id", memberId).maybeSingle());
+    if (!row || (userId !== undefined && row.user_id !== userId)) return undefined;
+    return memberFromRow(row);
+  };
+
+  const withIds = (events: AuditEventDraft[]) =>
+    events.map((event) => auditEventToRow({ id: newId("aud"), ...event } satisfies AuditEvent));
+
+  const writeContext = async (proposalId: string, memberId: string): Promise<ProposalWriteContext> => {
+    const [proposal, member] = await Promise.all([getProposal(proposalId), writingMember(memberId)]);
+    const productId = proposal?.target.type === "product" ? proposal.target.id : undefined;
+    const [versions, facts] = productId ? await Promise.all([listListingVersions(productId), getProductFacts(productId)]) : [[], undefined];
+    const liveListing = versions.find((version) => version.status === "live");
+    return {
+      proposal,
+      member,
+      at: now().toISOString(),
+      checkCompliance: (diff) => checkProposalCompliance({ type: proposal?.type ?? "listing_update", diff, liveListing, facts }),
+    };
+  };
+
+  const commit = async ({ proposal, events }: ProposalWriteResult, retireListingVersionId?: string): Promise<Proposal> => {
+    const saved = must(
+      await db.rpc("commit_proposal_write", {
+        p_proposal: proposalToRow(proposal),
+        p_events: withIds(events),
+        ...(retireListingVersionId ? { p_retire_listing_version_id: retireListingVersionId } : {}),
+      }),
+    );
+    if (!saved) {
+      // Someone decided it between our read and this write.
+      const latest = await getProposal(proposal.id);
+      throw new ProposalWriteError("not_pending", `This proposal was already ${(latest?.status ?? "decided").replace("_", " ")}.`);
+    }
+    return proposal;
+  };
+
+  /** What the listing optimizer reads about one product, shaped like the mock's in-memory store. */
+  const runStore = async (productId: string, memberId?: string): Promise<RunStore> => {
+    const product = await getProduct(productId);
+    const [accountRow, facts, versions, member, running, pending] = await Promise.all([
+      product ? db.from("seller_accounts").select().eq("id", product.sellerAccountId).maybeSingle() : null,
+      getProductFacts(productId),
+      listListingVersions(productId),
+      memberId ? writingMember(memberId) : undefined,
+      db.from("agent_runs").select().eq("subject_id", productId).eq("status", "running"),
+      db.from("proposals").select().eq("target_id", productId).eq("type", "listing_update").eq("status", "pending_approval"),
+    ]);
+    const account = accountRow ? must(accountRow) : null;
+    const live: ListingVersion | undefined = versions.find((version) => version.status === "live");
+    return {
+      members: member ? [member] : [],
+      sellerAccounts: account ? [sellerAccountFromRow(account)] : [],
+      products: product ? [product] : [],
+      productFacts: facts ? [facts] : [],
+      listingVersions: versions,
+      proposals: (must(pending) ?? []).map(proposalFromRow),
+      agentRuns: (must(running) ?? []).map(agentRunFromRow),
+      liveListing: (id) => (id === productId ? live : undefined),
+      nextId: { run: () => newId("run"), listingVersion: () => newId("lv"), review: () => newId("rev"), proposal: () => newId("prop") },
+    };
+  };
+
+  const scopeOf = (record: { workspaceId: string; sellerAccountId: string }) => ({
+    workspaceId: record.workspaceId,
+    sellerAccountId: record.sellerAccountId,
+  });
+
+  return {
+    async listWorkspaces() {
+      return (await selectAll((from, to) => db.from("workspaces").select().order("id").range(from, to))).map(workspaceFromRow);
+    },
+    async getWorkspace(id) {
+      const row = must(await db.from("workspaces").select().eq("id", id).maybeSingle());
+      return row ? workspaceFromRow(row) : undefined;
+    },
+    async listMembers(workspaceId) {
+      return (
+        await selectAll((from, to) => db.from("members").select().eq("workspace_id", workspaceId).order("id").range(from, to))
+      ).map(memberFromRow);
+    },
+    async getActingMember(workspaceId) {
+      const query = db.from("members").select().eq("workspace_id", workspaceId);
+      const row = must(
+        await (userId !== undefined ? query.eq("user_id", userId) : query.eq("role", "owner").order("created_at"))
+          .limit(1)
+          .maybeSingle(),
+      );
+      return row ? memberFromRow(row) : undefined;
+    },
+    async listSellerAccounts(workspaceId) {
+      return (
+        await selectAll((from, to) => {
+          const query = db.from("seller_accounts").select();
+          return (workspaceId ? query.eq("workspace_id", workspaceId) : query).order("id").range(from, to);
+        })
+      ).map(sellerAccountFromRow);
+    },
+    async getSellerAccount(id) {
+      const row = must(await db.from("seller_accounts").select().eq("id", id).maybeSingle());
+      return row ? sellerAccountFromRow(row) : undefined;
+    },
+
+    async listProducts({ sellerAccountId, category, status }) {
+      return (
+        await selectAll((from, to) => {
+          let query = db.from("products").select().eq("seller_account_id", sellerAccountId);
+          if (category !== undefined) query = query.eq("category", category);
+          if (status !== undefined) query = query.eq("status", status);
+          return query.order("id").range(from, to);
+        })
+      ).map(productFromRow);
+    },
+    getProduct,
+    getProductFacts,
+    listListingVersions,
+    async listReviews(listingVersionId) {
+      return (
+        await selectAll((from, to) =>
+          db
+            .from("reviews")
+            .select()
+            .eq("listing_version_id", listingVersionId)
+            .order("created_at", { ascending: false })
+            .order("id", { ascending: false })
+            .range(from, to),
+        )
+      ).map(reviewFromRow);
+    },
+    getReview,
+
+    async listProposals({ workspaceId, sellerAccountId, status, type, snoozed }) {
+      const at = now().toISOString();
+      return (
+        await selectAll((from, to) => {
+          let query = db.from("proposals").select().eq("workspace_id", workspaceId);
+          if (sellerAccountId !== undefined) query = query.eq("seller_account_id", sellerAccountId);
+          if (status !== undefined) query = query.eq("status", status);
+          if (type !== undefined) query = query.eq("type", type);
+          if (snoozed === true) query = query.gt("snoozed_until", at);
+          if (snoozed === false) query = query.or(`snoozed_until.is.null,snoozed_until.lte."${at}"`);
+          return query.order("created_at", { ascending: false }).order("id", { ascending: false }).range(from, to);
+        })
+      ).map(proposalFromRow);
+    },
+    getProposal,
+    async approveProposal({ proposalId, memberId, note, edits }) {
+      return commit(approveProposalWrite(await writeContext(proposalId, memberId), { note, edits }));
+    },
+    async rejectProposal({ proposalId, memberId, reason }) {
+      const result = rejectProposalWrite(await writeContext(proposalId, memberId), { reason });
+      // The agent's draft behind a rejected listing update will never go live.
+      const review = result.proposal.reviewId ? await getReview(result.proposal.reviewId) : undefined;
+      return commit(result, review?.listingVersionId);
+    },
+    async snoozeProposal({ proposalId, memberId, until }) {
+      return commit(snoozeProposalWrite(await writeContext(proposalId, memberId), { until }));
+    },
+
+    async listCampaigns(sellerAccountId) {
+      return (
+        await selectAll((from, to) =>
+          db.from("campaigns").select().eq("seller_account_id", sellerAccountId).order("id").range(from, to),
+        )
+      ).map(campaignFromRow);
+    },
+    async getCampaign(id) {
+      const row = must(await db.from("campaigns").select().eq("id", id).maybeSingle());
+      return row ? campaignFromRow(row) : undefined;
+    },
+    async listAdGroups(campaignId) {
+      return (
+        await selectAll((from, to) => db.from("ad_groups").select().eq("campaign_id", campaignId).order("id").range(from, to))
+      ).map(adGroupFromRow);
+    },
+    async getAdGroup(id) {
+      const row = must(await db.from("ad_groups").select().eq("id", id).maybeSingle());
+      return row ? adGroupFromRow(row) : undefined;
+    },
+    async listTargets(adGroupId) {
+      return (
+        await selectAll((from, to) => db.from("targets").select().eq("ad_group_id", adGroupId).order("id").range(from, to))
+      ).map(targetFromRow);
+    },
+    async getTarget(id) {
+      const row = must(await db.from("targets").select().eq("id", id).maybeSingle());
+      return row ? targetFromRow(row) : undefined;
+    },
+    async listMetricsDaily<T extends MetricsDaily["entityType"]>({
+      sellerAccountId,
+      entityType,
+      entityIds,
+      range,
+    }: {
+      sellerAccountId: string;
+      entityType: T;
+      entityIds?: string[];
+      range?: { from: string; to: string };
+    }) {
+      const rows = await selectAll((from, to) => {
+        let query = db.from("metrics_daily").select().eq("seller_account_id", sellerAccountId).eq("entity_type", entityType);
+        if (entityIds !== undefined) query = query.in("entity_id", entityIds);
+        if (range !== undefined) query = query.gte("date", range.from).lte("date", range.to);
+        return query.order("date").order("entity_id").range(from, to);
+      });
+      return rows.map((row) => metricsDailyFromRow(row) as Extract<MetricsDaily, { entityType: T }>);
+    },
+
+    async listAgentRuns({ workspaceId, sellerAccountId, subjectId, limit }) {
+      return (
+        await selectAll((from, to) => {
+          let query = db.from("agent_runs").select().eq("workspace_id", workspaceId);
+          if (sellerAccountId !== undefined) query = query.eq("seller_account_id", sellerAccountId);
+          if (subjectId !== undefined) query = query.eq("subject_id", subjectId);
+          return query.order("started_at", { ascending: false }).order("id", { ascending: false }).range(from, to);
+        }, limit)
+      ).map(agentRunFromRow);
+    },
+    getAgentRun,
+    async startListingOptimizer({ productId, memberId }) {
+      const { run, events } = startListingOptimizerRun(await runStore(productId, memberId), { productId, memberId, at: now() });
+      const { error } = await db.rpc("start_agent_run", { p_run: agentRunToRow(run), p_events: withIds(events) });
+      if (error?.code === UNIQUE_VIOLATION) throw new AgentRunError("conflict", "The optimizer is already running on this product.");
+      must({ data: null, error });
+      return run;
+    },
+    async completeAgentRun(runId) {
+      const run = await getAgentRun(runId);
+      if (!run) throw new AgentRunError("not_found", "That agent run doesn't exist.");
+      const finished = async (latest: typeof run) => {
+        const proposalId = latest.proposalIds[0];
+        return { run: latest, proposal: proposalId ? await getProposal(proposalId) : undefined };
+      };
+      if (run.status !== "running") return finished(run);
+
+      const store = await runStore(run.subject?.id ?? "");
+      const result = completeListingOptimizerRun(store, run, now().toISOString());
+      const scope = scopeOf(run);
+      const { data: filed, error } = await db.rpc("file_agent_run_output", {
+        p_run: agentRunToRow(result.run),
+        p_listing_version: listingVersionToRow(result.version, scope),
+        p_review: reviewToRow(result.review, scope),
+        p_proposal: proposalToRow(result.proposal),
+        p_events: withIds(result.events),
+      });
+      if (error?.code === UNIQUE_VIOLATION) {
+        throw new AgentRunError("conflict", "A listing proposal for this product is already waiting for approval.");
+      }
+      if (!must({ data: filed, error })) {
+        // Another request completed it first; return what that one filed.
+        const latest = await getAgentRun(runId);
+        if (!latest) throw new AgentRunError("not_found", "That agent run doesn't exist.");
+        return finished(latest);
+      }
+      return { run: result.run, proposal: result.proposal };
+    },
+    async listAuditEvents({ workspaceId, sellerAccountId, limit }) {
+      return (
+        await selectAll((from, to) => {
+          const query = db.from("audit_events").select().eq("workspace_id", workspaceId);
+          return (sellerAccountId !== undefined ? query.eq("seller_account_id", sellerAccountId) : query)
+            .order("at", { ascending: false })
+            .order("seq", { ascending: false })
+            .range(from, to);
+        }, limit)
+      ).map(auditEventFromRow);
+    },
+  };
+}

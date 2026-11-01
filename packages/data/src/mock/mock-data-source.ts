@@ -7,7 +7,7 @@ import {
   type ProposalWriteContext,
   type ProposalWriteResult,
 } from "../proposal-writes";
-import { completeListingOptimizerRun, startListingOptimizerRun } from "./agent-runs";
+import { completeListingOptimizerRun, startListingOptimizerRun } from "../agents/agent-runs";
 import { generateMockDataset, type MockDataset } from "./generate";
 
 export type MockDataSourceOptions = {
