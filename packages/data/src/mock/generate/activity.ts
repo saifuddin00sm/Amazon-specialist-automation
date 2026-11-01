@@ -36,8 +36,6 @@ export type Activity = {
   auditEvents: AuditEvent[];
 };
 
-/** ACoS the bid optimizer steers toward. */
-const TARGET_ACOS = 0.3;
 const PENDING_WINDOW_DAYS = 6;
 const RUN_CADENCE_DAYS = { listing_writer: 7, bid_optimizer: 3, keyword_harvester: 7, budget_pacer: 7 } as const;
 const CURRENCY_SYMBOL: Record<Currency, string> = { USD: "$", CAD: "CA$", MXN: "MX$", GBP: "£", EUR: "€", JPY: "¥" };
@@ -323,7 +321,8 @@ export function generateActivity(
       }
     }
 
-    // bid_optimizer: bring ACoS toward target and pause targets that never convert.
+    // bid_optimizer: bring ACoS toward the account's target and pause targets that never convert.
+    const targetAcos = account.targetAcos;
     const positive = accountTargets.filter((target) => !target.negative && target.state === "enabled" && target.bid !== undefined);
     const lower: Target[] = [];
     const raise: Target[] = [];
@@ -332,8 +331,8 @@ export function generateActivity(
       const s = stats.target.get(target.id);
       if (!s) continue;
       const acos = s.sales14 > 0 ? s.spend14 / s.sales14 : Infinity;
-      if (s.spend14 >= 5 && s.orders14 >= 1 && acos > 0.45) lower.push(target);
-      else if (s.orders14 >= 3 && acos < 0.18) raise.push(target);
+      if (s.spend14 >= 5 && s.orders14 >= 1 && acos > targetAcos * 1.5) lower.push(target);
+      else if (s.orders14 >= 3 && acos < targetAcos * 0.6) raise.push(target);
       else if (s.spend30 >= 15 && s.orders30 === 0) pause.push(target);
     }
     for (const target of [...lower.slice(0, 5), ...raise.slice(0, 3)]) {
@@ -342,7 +341,7 @@ export function generateActivity(
       if (!run || !s || target.bid === undefined) continue;
       const acos = s.spend14 / s.sales14;
       const isLower = lower.includes(target);
-      const change = isLower ? -Math.min(0.4, Math.max(0.1, 1 - TARGET_ACOS / acos)) : rng.float(0.1, 0.25);
+      const change = isLower ? -Math.min(0.4, Math.max(0.1, 1 - targetAcos / acos)) : rng.float(0.1, 0.25);
       const after = Math.max(0.2, round2(target.bid * (1 + change)));
       const magnitude = Math.abs(change);
       const proposal = addProposal(run, account, finishedMs(run), {
@@ -350,7 +349,7 @@ export function generateActivity(
         risk: magnitude <= 0.15 ? "low" : magnitude <= 0.3 ? "medium" : "high",
         title: `${isLower ? "Lower" : "Raise"} bid on ${targetLabel(target)}`,
         rationale: isLower
-          ? `14-day ACoS is ${percent(acos)} on ${money(s.spend14)} spend, above the ${percent(TARGET_ACOS)} target.`
+          ? `14-day ACoS is ${percent(acos)} on ${money(s.spend14)} spend, above the ${percent(targetAcos)} target.`
           : `14-day ACoS is ${percent(acos)} with ${s.orders14} orders; there is room to win more impressions.`,
         target: { type: "target", id: target.id },
         diff: [{ path: "bid", before: target.bid, after }],

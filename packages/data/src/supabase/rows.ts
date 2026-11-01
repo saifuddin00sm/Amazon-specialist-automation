@@ -98,6 +98,7 @@ export const sellerAccountToRow = (account: SellerAccount): TablesInsert<"seller
   marketplace: account.marketplace,
   currency: account.currency,
   autonomy_level: account.autonomyLevel,
+  target_acos: account.targetAcos,
   connected_at: account.connectedAt,
 });
 
@@ -110,6 +111,7 @@ export const sellerAccountFromRow = (row: Tables<"seller_accounts">): SellerAcco
     marketplace: row.marketplace,
     currency: row.currency,
     autonomyLevel: row.autonomy_level,
+    targetAcos: row.target_acos,
     connectedAt: iso(row.connected_at),
   });
 

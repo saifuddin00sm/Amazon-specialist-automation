@@ -39,18 +39,26 @@ describe("MemberSchema", () => {
 });
 
 describe("SellerAccountSchema", () => {
+  const account = {
+    id: "sa_1",
+    workspaceId: "ws_1",
+    name: "Acme US",
+    sellerId: "A1B2C3D4E5F6G7",
+    marketplace: "US",
+    currency: "USD",
+    autonomyLevel: "L1",
+    targetAcos: 0.3,
+    connectedAt: at,
+  };
+
   it("rejects an unknown marketplace", () => {
-    const result = SellerAccountSchema.safeParse({
-      id: "sa_1",
-      workspaceId: "ws_1",
-      name: "Acme US",
-      sellerId: "A1B2C3D4E5F6G7",
-      marketplace: "XX",
-      currency: "USD",
-      autonomyLevel: "L1",
-      connectedAt: at,
-    });
-    expect(result.success).toBe(false);
+    expect(SellerAccountSchema.safeParse(account).success).toBe(true);
+    expect(SellerAccountSchema.safeParse({ ...account, marketplace: "XX" }).success).toBe(false);
+  });
+
+  it("keeps target ACoS a fraction above zero", () => {
+    expect(SellerAccountSchema.safeParse({ ...account, targetAcos: 0 }).success).toBe(false);
+    expect(SellerAccountSchema.safeParse({ ...account, targetAcos: 30 }).success).toBe(false);
   });
 });
 

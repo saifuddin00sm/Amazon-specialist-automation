@@ -5,12 +5,14 @@ import { AGENCY_NAMES, BRAND_PREFIXES, BRAND_SUFFIXES, CATEGORIES, type Category
 export const MERCHANT_SKU_COUNT = 120;
 const MERCHANT_CATEGORIES: CategoryKey[] = ["kitchen", "outdoors", "pets"];
 
-const AGENCY_CLIENTS: { marketplace: Marketplace; currency: Currency; autonomyLevel: AutonomyLevel }[] = [
-  { marketplace: "US", currency: "USD", autonomyLevel: "L1" },
-  { marketplace: "US", currency: "USD", autonomyLevel: "L2" },
-  { marketplace: "CA", currency: "CAD", autonomyLevel: "L1" },
-  { marketplace: "UK", currency: "GBP", autonomyLevel: "L0" },
-  { marketplace: "DE", currency: "EUR", autonomyLevel: "L1" },
+const MERCHANT_TARGET_ACOS = 0.3;
+
+const AGENCY_CLIENTS: { marketplace: Marketplace; currency: Currency; autonomyLevel: AutonomyLevel; targetAcos: number }[] = [
+  { marketplace: "US", currency: "USD", autonomyLevel: "L1", targetAcos: 0.3 },
+  { marketplace: "US", currency: "USD", autonomyLevel: "L2", targetAcos: 0.25 },
+  { marketplace: "CA", currency: "CAD", autonomyLevel: "L1", targetAcos: 0.35 },
+  { marketplace: "UK", currency: "GBP", autonomyLevel: "L0", targetAcos: 0.3 },
+  { marketplace: "DE", currency: "EUR", autonomyLevel: "L1", targetAcos: 0.28 },
 ];
 
 /** What to generate for one seller account. */
@@ -94,6 +96,7 @@ export function generateOrganizations(ctx: GeneratorContext): Organizations {
       marketplace: "US",
       currency: "USD",
       autonomyLevel: "L1",
+      targetAcos: MERCHANT_TARGET_ACOS,
       connectedAt: clock.iso(Date.parse(merchant.createdAt) + rng.int(1, 10) * DAY_MS),
     },
     brand: merchantBrand,
@@ -128,6 +131,7 @@ export function generateOrganizations(ctx: GeneratorContext): Organizations {
       marketplace: client.marketplace,
       currency: client.currency,
       autonomyLevel: client.autonomyLevel,
+      targetAcos: client.targetAcos,
       connectedAt: clock.iso(Date.parse(agency.createdAt) + rng.int(5, 200) * DAY_MS),
     };
     const total = rng.int(18, 36);

@@ -239,14 +239,14 @@ isOneToOne: false
                   ]
                 },"seller_accounts": {
                   Row: {
-                    "autonomy_level": Database["public"]['Enums']["autonomy_level"],"connected_at": string,"currency": Database["public"]['Enums']["currency"],"id": string,"marketplace": Database["public"]['Enums']["marketplace"],"name": string,"seller_id": string,"workspace_id": string
+                    "autonomy_level": Database["public"]['Enums']["autonomy_level"],"connected_at": string,"currency": Database["public"]['Enums']["currency"],"id": string,"marketplace": Database["public"]['Enums']["marketplace"],"name": string,"seller_id": string,"target_acos": number,"workspace_id": string
                   }
                   ComputedFields: never
                   Insert: {
-                    "autonomy_level": Database["public"]['Enums']["autonomy_level"],"connected_at": string,"currency": Database["public"]['Enums']["currency"],"id": string,"marketplace": Database["public"]['Enums']["marketplace"],"name": string,"seller_id": string,"workspace_id": string
+                    "autonomy_level": Database["public"]['Enums']["autonomy_level"],"connected_at": string,"currency": Database["public"]['Enums']["currency"],"id": string,"marketplace": Database["public"]['Enums']["marketplace"],"name": string,"seller_id": string,"target_acos"?: number,"workspace_id": string
                   }
                   Update: {
-                    "autonomy_level"?: Database["public"]['Enums']["autonomy_level"],"connected_at"?: string,"currency"?: Database["public"]['Enums']["currency"],"id"?: string,"marketplace"?: Database["public"]['Enums']["marketplace"],"name"?: string,"seller_id"?: string,"workspace_id"?: string
+                    "autonomy_level"?: Database["public"]['Enums']["autonomy_level"],"connected_at"?: string,"currency"?: Database["public"]['Enums']["currency"],"id"?: string,"marketplace"?: Database["public"]['Enums']["marketplace"],"name"?: string,"seller_id"?: string,"target_acos"?: number,"workspace_id"?: string
                   }
                   Relationships: [
                     {

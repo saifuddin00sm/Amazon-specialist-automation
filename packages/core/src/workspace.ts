@@ -44,6 +44,8 @@ export const SellerAccountSchema = z.object({
   marketplace: MarketplaceSchema,
   currency: CurrencySchema,
   autonomyLevel: AutonomyLevelSchema,
+  /** Advertising cost of sales the account aims for, as a fraction (0.3 = 30%). */
+  targetAcos: z.number().positive().max(1),
   connectedAt: IsoDateTimeSchema,
 });
 export type SellerAccount = z.infer<typeof SellerAccountSchema>;
