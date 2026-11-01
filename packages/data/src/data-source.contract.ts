@@ -378,6 +378,51 @@ export function describeDataSourceContract(
       });
     });
 
+    describe("report branding", () => {
+      const branding = { displayName: "Acme Growth", primaryColor: "#123456", accentColor: "#abcdef", logo: "data:image/png;base64,iVBORw0KGgo=" };
+
+      it("reads each workspace's branding as seeded", async () => {
+        const { merchant, agency } = workspaces();
+        expect(agency.branding).toBeDefined();
+        expect(await reader().getWorkspace(agency.id)).toEqual(agency);
+        expect(await reader().getWorkspace(merchant.id)).toEqual(merchant);
+      });
+
+      it("lets an owner set and clear it, logging the change without the logo", async () => {
+        const { source } = await setup();
+        const { merchant } = workspaces();
+        const owner = memberOf(merchant.id, "owner");
+
+        const updated = await source.updateWorkspaceBranding({ workspaceId: merchant.id, memberId: owner.id, branding });
+        expect(updated).toEqual({ ...merchant, branding });
+        expect(await source.getWorkspace(merchant.id)).toEqual(updated);
+        const [event] = await latestEvents(source, merchant.id, 1);
+        expect(event).toMatchObject({
+          action: "settings.updated",
+          actor: { type: "member", memberId: owner.id },
+          entity: { type: "workspace", id: merchant.id },
+          metadata: { setting: "report_branding", branding: { displayName: "Acme Growth", logo: true } },
+        });
+
+        await source.updateWorkspaceBranding({ workspaceId: merchant.id, memberId: owner.id, branding: null });
+        expect(await source.getWorkspace(merchant.id)).toEqual(merchant);
+      });
+
+      it("refuses non-owners, other workspaces and invalid branding", async () => {
+        const { source } = await setup();
+        const { merchant, agency } = workspaces();
+        const owner = memberOf(merchant.id, "owner");
+        const write = (memberId: string, workspaceId = merchant.id, value: typeof branding | null = branding) =>
+          source.updateWorkspaceBranding({ workspaceId, memberId, branding: value });
+
+        await expect(write(memberOf(merchant.id, "specialist").id)).rejects.toMatchObject({ code: "forbidden" });
+        await expect(write(owner.id, agency.id)).rejects.toMatchObject({ code: "forbidden" });
+        await expect(write(owner.id, "nope")).rejects.toMatchObject({ code: "not_found" });
+        await expect(write(owner.id, merchant.id, { ...branding, primaryColor: "blue" })).rejects.toMatchObject({ code: "invalid_input" });
+        expect(await source.getWorkspace(merchant.id)).toEqual(merchant);
+      });
+    });
+
     describe("campaign optimizer runs", () => {
       const subject = () => {
         const { merchant } = workspaces();

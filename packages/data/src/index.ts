@@ -14,7 +14,9 @@ export type {
   SnoozeProposalInput,
   StartCampaignOptimizerInput,
   StartListingOptimizerInput,
+  UpdateWorkspaceBrandingInput,
 } from "./data-source";
+export { SettingsWriteError, type SettingsWriteErrorCode } from "./settings-writes";
 export { CAMPAIGN_OPTIMIZER_DAYS, adPerformance, campaignOptimizerWindow, type AdPerformance } from "./agents/campaign-optimizer";
 export {
   MOCK_ANCHOR_DATE,

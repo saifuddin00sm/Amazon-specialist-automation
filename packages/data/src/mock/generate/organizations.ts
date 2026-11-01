@@ -7,6 +7,9 @@ const MERCHANT_CATEGORIES: CategoryKey[] = ["kitchen", "outdoors", "pets"];
 
 const MERCHANT_TARGET_ACOS = 0.3;
 
+const AGENCY_PRIMARY = "#0f3d3e";
+const AGENCY_ACCENT = "#e0a100";
+
 const AGENCY_CLIENTS: { marketplace: Marketplace; currency: Currency; autonomyLevel: AutonomyLevel; targetAcos: number }[] = [
   { marketplace: "US", currency: "USD", autonomyLevel: "L1", targetAcos: 0.3 },
   { marketplace: "US", currency: "USD", autonomyLevel: "L2", targetAcos: 0.25 },
@@ -113,6 +116,8 @@ export function generateOrganizations(ctx: GeneratorContext): Organizations {
     name: agencyName,
     kind: "agency",
     createdAt: clock.iso(clock.daysAgo(rng.int(400, 600), 15)),
+    // Agencies send reports to clients under their own brand.
+    branding: { displayName: agencyName, logo: monogramLogo(agencyName, AGENCY_ACCENT), primaryColor: AGENCY_PRIMARY, accentColor: AGENCY_ACCENT },
   };
   workspaces.push(agency);
   const agencyDomain = `${slugify(agencyName)}.example.com`;
@@ -146,4 +151,15 @@ export function generateOrganizations(ctx: GeneratorContext): Organizations {
   }
 
   return { workspaces, members, sellerAccounts: plans.map((plan) => plan.account), plans };
+}
+
+/** A square SVG logo with the name's initials, as a data URL. */
+function monogramLogo(name: string, color: string): string {
+  const initials = name
+    .split(/\s+/)
+    .map((word) => word.match(/[A-Za-z]/)?.[0]?.toUpperCase() ?? "")
+    .join("")
+    .slice(0, 2);
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="${color}"/><text x="32" y="42" font-family="Helvetica,Arial,sans-serif" font-size="26" font-weight="700" text-anchor="middle" fill="#0f3d3e">${initials}</text></svg>`;
+  return `data:image/svg+xml;base64,${btoa(svg)}`;
 }

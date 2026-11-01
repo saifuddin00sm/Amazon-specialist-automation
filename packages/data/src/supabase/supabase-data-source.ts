@@ -20,7 +20,8 @@ import {
   type ProposalWriteContext,
   type ProposalWriteResult,
 } from "../proposal-writes";
-import type { Database } from "./database.types";
+import { SettingsWriteError, brandingWrite } from "../settings-writes";
+import type { Database, Json } from "./database.types";
 import {
   adGroupFromRow,
   agentRunFromRow,
@@ -266,6 +267,20 @@ export function createSupabaseDataSource(
     async getWorkspace(id) {
       const row = must(await db.from("workspaces").select().eq("id", id).maybeSingle());
       return row ? workspaceFromRow(row) : undefined;
+    },
+    async updateWorkspaceBranding({ workspaceId, memberId, branding }) {
+      const [row, member] = await Promise.all([db.from("workspaces").select().eq("id", workspaceId).maybeSingle(), writingMember(memberId)]);
+      const workspace = must(row);
+      const result = brandingWrite({ workspace: workspace ? workspaceFromRow(workspace) : undefined, member, at: now().toISOString() }, branding);
+      const saved = must(
+        await db.rpc("update_workspace_branding", {
+          p_workspace_id: workspaceId,
+          p_branding: (result.workspace.branding ?? null) as Json,
+          p_events: withIds(result.events),
+        }),
+      );
+      if (!saved) throw new SettingsWriteError("forbidden", "Only workspace owners can change report branding.");
+      return result.workspace;
     },
     async listMembers(workspaceId) {
       return (

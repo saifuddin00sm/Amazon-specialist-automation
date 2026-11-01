@@ -125,4 +125,9 @@ export async function resetMutableTables(admin: AppSupabaseClient, dataset: Mock
   // Proposals point at reviews, and reviews at listing versions.
   for (const table of ["proposals", "agent_runs", "audit_events", "reviews", "listing_versions"] as const) await clear(table);
   for (const table of MUTABLE_TABLES) await insertAll(admin, table, rows[table]);
+  // Workspaces can't be cleared without cascading to everything, so only their branding goes back.
+  for (const workspace of rows.workspaces) {
+    const { error } = await admin.from("workspaces").update({ branding: workspace.branding ?? null }).eq("id", workspace.id);
+    if (error) throw new Error(`Restoring branding of ${workspace.id} failed: ${error.message}`);
+  }
 }

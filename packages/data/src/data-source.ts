@@ -2,6 +2,7 @@ import type {
   AdGroup,
   AgentRun,
   AuditEvent,
+  Branding,
   Campaign,
   DiffEdit,
   ListingVersion,
@@ -76,6 +77,9 @@ export type StartListingOptimizerInput = { productId: string; memberId: string }
 
 export type StartCampaignOptimizerInput = { campaignId: string; memberId: string };
 
+/** Report branding for a workspace; null goes back to the default. */
+export type UpdateWorkspaceBrandingInput = { workspaceId: string; memberId: string; branding: Branding | null };
+
 export type AgentRunErrorCode = "not_found" | "forbidden" | "conflict";
 
 /** An agent run the data source refused to start or complete. `message` is safe to show. */
@@ -98,6 +102,11 @@ export interface DataSource {
   getActingMember(workspaceId: string): Promise<Member | undefined>;
   listSellerAccounts(workspaceId?: string): Promise<SellerAccount[]>;
   getSellerAccount(id: string): Promise<SellerAccount | undefined>;
+  /**
+   * Sets a workspace's report branding as `memberId`, who must be its owner. Writes settings.updated.
+   * Throws SettingsWriteError when refused.
+   */
+  updateWorkspaceBranding(input: UpdateWorkspaceBrandingInput): Promise<Workspace>;
 
   listProducts(query: ProductQuery): Promise<Product[]>;
   getProduct(id: string): Promise<Product | undefined>;

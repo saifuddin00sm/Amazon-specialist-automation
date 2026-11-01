@@ -16,6 +16,7 @@ import {
   type ProposalWriteContext,
   type ProposalWriteResult,
 } from "../proposal-writes";
+import { brandingWrite } from "../settings-writes";
 import { completeListingOptimizerRun, startListingOptimizerRun } from "../agents/agent-runs";
 import { generateMockDataset, type MockDataset } from "./generate";
 
@@ -30,6 +31,7 @@ export type MockDataSourceOptions = {
  */
 export function createMockDataSource(dataset: MockDataset, { now = () => new Date() }: MockDataSourceOptions = {}): DataSource {
   deepFreeze(dataset);
+  const workspaces = [...dataset.workspaces];
   const proposals = [...dataset.proposals];
   const listingVersions = [...dataset.listingVersions];
   const auditEvents = [...dataset.auditEvents];
@@ -141,10 +143,19 @@ export function createMockDataSource(dataset: MockDataset, { now = () => new Dat
 
   return {
     async listWorkspaces() {
-      return [...dataset.workspaces];
+      return [...workspaces];
     },
     async getWorkspace(id) {
-      return byId(dataset.workspaces, id);
+      return byId(workspaces, id);
+    },
+    async updateWorkspaceBranding({ workspaceId, memberId, branding }) {
+      const result = brandingWrite(
+        { workspace: byId(workspaces, workspaceId), member: byId(dataset.members, memberId), at: now().toISOString() },
+        branding,
+      );
+      workspaces[workspaces.findIndex((workspace) => workspace.id === workspaceId)] = deepFreeze(result.workspace);
+      appendAudit(result.events);
+      return result.workspace;
     },
     async listMembers(workspaceId) {
       return dataset.members.filter((member) => member.workspaceId === workspaceId);

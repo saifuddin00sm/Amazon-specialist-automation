@@ -64,10 +64,13 @@ export const workspaceToRow = (workspace: Workspace): TablesInsert<"workspaces">
   name: workspace.name,
   kind: workspace.kind,
   created_at: workspace.createdAt,
+  branding: workspace.branding ?? null,
 });
 
 export const workspaceFromRow = (row: Tables<"workspaces">): Workspace =>
-  WorkspaceSchema.parse({ id: row.id, name: row.name, kind: row.kind, createdAt: iso(row.created_at) });
+  WorkspaceSchema.parse(
+    compact({ id: row.id, name: row.name, kind: row.kind, createdAt: iso(row.created_at), branding: row.branding ?? undefined }),
+  );
 
 export const memberToRow = (member: Member): TablesInsert<"members"> => ({
   id: member.id,

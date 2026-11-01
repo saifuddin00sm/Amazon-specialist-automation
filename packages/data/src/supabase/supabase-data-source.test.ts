@@ -87,6 +87,20 @@ describe.skipIf(skip)("supabase DataSource as a signed-in member", () => {
     expect(await source.getProposal(proposal!.id)).toEqual(proposal);
   });
 
+  it("lets only the owner change report branding through row-level security", async () => {
+    const owner = memberOf(agency!.id, "owner");
+    const specialist = memberOf(agency!.id, "specialist");
+    const branding = { primaryColor: "#222222", accentColor: "#ff8800" };
+
+    await expect(
+      (await signedIn(specialist.email)).updateWorkspaceBranding({ workspaceId: agency!.id, memberId: specialist.id, branding }),
+    ).rejects.toMatchObject({ code: "forbidden" });
+    const source = await signedIn(owner.email);
+    const updated = await source.updateWorkspaceBranding({ workspaceId: agency!.id, memberId: owner.id, branding });
+    expect((await source.getWorkspace(agency!.id))?.branding).toEqual(branding);
+    expect(updated.branding).toEqual(branding);
+  });
+
   it("lets a client approver plan a campaign on their own account and approve the plan through row-level security", async () => {
     const approver = dataset.members.find((member) => member.role === "client_approver")!;
     const campaign = dataset.campaigns.find(
