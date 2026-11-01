@@ -12,8 +12,11 @@
 
 - UI never fetches directly. All reads and writes go through the DataSource
   interface in packages/data.
-- Phase 1 uses mockDataSource only. Do not add Supabase or Amazon calls until
+- DATA_SOURCE=mock|supabase picks the backend (default mock). Both must pass
+  the DataSource contract in packages/data. Do not add Amazon calls until
   asked.
+- Schema changes are a new migration in supabase/migrations with RLS for every
+  table, then `pnpm db:types`. Never edit an applied migration.
 - Anything that changes Amazon or spends money is a Proposal with a status.
   Never mutate live data from a component.
 - Show the AIGenerated badge on anything an agent produced.
