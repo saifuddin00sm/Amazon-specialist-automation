@@ -42,14 +42,16 @@ export function SellerContextProvider({
   );
 
   const value = useMemo<SellerContextValue>(() => {
-    const sellerAccounts = allSellerAccounts.filter((account) => account.workspaceId === workspaceId);
+    // Acting as someone else (View as) can hide the workspace or account picked so far: fall back
+    // to the first one still visible. A just-connected account isn't picked yet either.
+    const workspace = workspaces.find((candidate) => candidate.id === workspaceId) ?? workspaces[0];
+    const sellerAccounts = allSellerAccounts.filter((account) => account.workspaceId === workspace?.id);
     return {
       workspaces,
       sellerAccounts,
-      workspace: workspaces.find((workspace) => workspace.id === workspaceId),
-      // A new account (just connected) isn't selected yet; fall back to the workspace's first.
+      workspace,
       sellerAccount: sellerAccounts.find((account) => account.id === sellerAccountId) ?? sellerAccounts[0],
-      member: workspaceId ? members[workspaceId] : undefined,
+      member: workspace ? members[workspace.id] : undefined,
       selectWorkspace: (nextWorkspaceId) => {
         setWorkspaceId(nextWorkspaceId);
         setSellerAccountId(firstAccountIn(allSellerAccounts, nextWorkspaceId));

@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/sidebar";
 import { isNavItemActive, mainNav, settingsNav, type NavItem } from "@/lib/navigation";
 import { siteConfig } from "@/lib/site";
+import { useSellerContext } from "./seller-context";
 
 function NavButton({ item, active }: { item: NavItem; active: boolean }) {
   return (
@@ -50,6 +51,9 @@ function NavLink({ item }: { item: NavItem }) {
 }
 
 export function AppSidebar() {
+  const { workspace } = useSellerContext();
+  // Clients is agency mode: merchants run one brand and have no clients.
+  const nav = mainNav.filter((item) => item.href !== "/clients" || workspace?.kind === "agency");
   return (
     <Sidebar collapsible="icon">
       <SidebarHeader>
@@ -75,7 +79,7 @@ export function AppSidebar() {
         <SidebarGroup>
           <SidebarGroupContent>
             <SidebarMenu>
-              {mainNav.map((item) => (
+              {nav.map((item) => (
                 <NavLink key={item.href} item={item} />
               ))}
             </SidebarMenu>

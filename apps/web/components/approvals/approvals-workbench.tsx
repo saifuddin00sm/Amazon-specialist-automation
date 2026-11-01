@@ -51,12 +51,15 @@ export function ApprovalsWorkbench({ data }: { data: ApprovalsData }) {
     current.filter((item) => !ids.includes(item.proposal.id)),
   );
   const [saving, startTransition] = useTransition();
-  // `?proposal=` (e.g. from an agent run) opens that proposal first.
-  const linkedId = useSearchParams().get("proposal") ?? undefined;
+  // `?proposal=` (e.g. from an agent run) opens that proposal first; `?account=` (from Clients)
+  // starts filtered to one client.
+  const searchParams = useSearchParams();
+  const linkedId = searchParams.get("proposal") ?? undefined;
+  const linkedAccount = searchParams.get("account") ?? undefined;
   const [view, setView] = useState<View>(() =>
     data.items.find((item) => item.proposal.id === linkedId)?.snoozed ? "snoozed" : "queue",
   );
-  const [filters, setFilters] = useState<Filters>(NO_FILTERS);
+  const [filters, setFilters] = useState<Filters>(() => (linkedAccount ? { ...NO_FILTERS, account: linkedAccount } : NO_FILTERS));
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [activeId, setActiveId] = useState<string | undefined>(linkedId);
   const [modeFor, setModeFor] = useState<{ id: string; mode: DetailMode }>();
@@ -265,6 +268,19 @@ export function ApprovalsWorkbench({ data }: { data: ApprovalsData }) {
         </div>
       </div>
 
+      {sellerAccounts.length > 1 && (
+        <ClientCounts
+          label={workspace?.kind === "agency" ? "Clients" : "Accounts"}
+          counts={sellerAccounts.map((account) => ({
+            id: account.id,
+            name: account.name,
+            count: inWorkspace.filter((item) => item.snoozed === (view === "snoozed") && item.account.id === account.id).length,
+          }))}
+          active={accountFilter}
+          onPick={(account) => setFilters((current) => ({ ...current, account }))}
+        />
+      )}
+
       <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[minmax(300px,380px)_1fr]">
         <div className="flex max-h-[28rem] min-h-0 flex-col overflow-hidden rounded-xl border bg-card lg:max-h-none">
           <div className="flex h-11 shrink-0 items-center gap-2 border-b px-3">
@@ -373,6 +389,42 @@ export function ApprovalsWorkbench({ data }: { data: ApprovalsData }) {
           />
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+/** The cross-client queue at a glance: how much waits on each client. Picking one filters to it. */
+function ClientCounts({
+  label,
+  counts,
+  active,
+  onPick,
+}: {
+  label: string;
+  counts: { id: string; name: string; count: number }[];
+  active: string;
+  onPick: (account: string) => void;
+}) {
+  const total = counts.reduce((sum, client) => sum + client.count, 0);
+  const chip = (id: string, name: string, count: number) => (
+    <button
+      key={id}
+      type="button"
+      aria-pressed={active === id}
+      className={cn(
+        "inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition-colors",
+        active === id ? "border-foreground bg-secondary" : "text-muted-foreground hover:text-foreground",
+      )}
+      onClick={() => onPick(id)}
+    >
+      {name}
+      <span className="tabular-nums opacity-70">{count}</span>
+    </button>
+  );
+  return (
+    <div className="flex items-center gap-2 overflow-x-auto pb-1" aria-label={`${label} with proposals waiting`} data-testid="client-counts">
+      {chip("all", `All ${label.toLowerCase()}`, total)}
+      {counts.map((client) => chip(client.id, client.name, client.count))}
     </div>
   );
 }

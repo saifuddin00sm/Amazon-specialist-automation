@@ -6,7 +6,7 @@ import { SellerContextProvider } from "@/components/shell/seller-context";
 import { TopBar } from "@/components/shell/top-bar";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { Skeleton } from "@/components/ui/skeleton";
-import { getDataSource, getSignedInUser } from "@/lib/data";
+import { getDataSource, getSignedInUser, getViewAs } from "@/lib/data";
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -23,10 +23,11 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 async function AppShell({ children }: { children: React.ReactNode }) {
   await connection();
   const dataSource = await getDataSource();
-  const [workspaces, sellerAccounts, user] = await Promise.all([
+  const [workspaces, sellerAccounts, user, viewAs] = await Promise.all([
     dataSource.listWorkspaces(),
     dataSource.listSellerAccounts(),
     getSignedInUser(),
+    getViewAs(),
   ]);
   const acting = await Promise.all(workspaces.map((workspace) => dataSource.getActingMember(workspace.id)));
   const members = Object.fromEntries(
@@ -38,7 +39,7 @@ async function AppShell({ children }: { children: React.ReactNode }) {
       <SidebarProvider>
         <AppSidebar />
         <SidebarInset>
-          <TopBar user={user} />
+          <TopBar user={user} viewAs={viewAs} />
           <AgentsPausedBanner />
           <main className="flex flex-1 flex-col p-4 md:p-6">{children}</main>
         </SidebarInset>

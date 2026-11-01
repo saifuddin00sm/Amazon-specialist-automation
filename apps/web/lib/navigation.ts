@@ -5,6 +5,7 @@ import {
   Megaphone,
   Package,
   Settings,
+  Users,
   type LucideIcon,
 } from "lucide-react";
 
@@ -21,6 +22,12 @@ export const mainNav: NavItem[] = [
     href: "/dashboard",
     icon: LayoutDashboard,
     description: "Account health, agent activity, and what needs your attention.",
+  },
+  {
+    title: "Clients",
+    href: "/clients",
+    icon: Users,
+    description: "Every client account at a glance: health, what needs attention and what is waiting.",
   },
   {
     title: "Approvals",

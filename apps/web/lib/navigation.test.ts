@@ -14,9 +14,10 @@ describe("isNavItemActive", () => {
 });
 
 describe("navigation", () => {
-  it("has the six shell sections in order", () => {
+  it("has the seven shell sections in order", () => {
     expect(allNav.map((item) => item.title)).toEqual([
       "Dashboard",
+      "Clients",
       "Approvals",
       "Listings",
       "Campaigns",
