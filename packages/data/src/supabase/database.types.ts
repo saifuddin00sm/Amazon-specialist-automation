@@ -239,14 +239,14 @@ isOneToOne: false
                   ]
                 },"seller_accounts": {
                   Row: {
-                    "autonomy_level": Database["public"]['Enums']["autonomy_level"],"connected_at": string,"currency": Database["public"]['Enums']["currency"],"id": string,"marketplace": Database["public"]['Enums']["marketplace"],"name": string,"seller_id": string,"target_acos": number,"workspace_id": string
+                    "autonomy_by_action": Json | null,"autonomy_level": Database["public"]['Enums']["autonomy_level"],"connected_at": string,"currency": Database["public"]['Enums']["currency"],"guardrails": Json | null,"id": string,"marketplace": Database["public"]['Enums']["marketplace"],"name": string,"seller_id": string,"target_acos": number,"workspace_id": string
                   }
                   ComputedFields: never
                   Insert: {
-                    "autonomy_level": Database["public"]['Enums']["autonomy_level"],"connected_at": string,"currency": Database["public"]['Enums']["currency"],"id": string,"marketplace": Database["public"]['Enums']["marketplace"],"name": string,"seller_id": string,"target_acos"?: number,"workspace_id": string
+                    "autonomy_by_action"?: Json | null,"autonomy_level": Database["public"]['Enums']["autonomy_level"],"connected_at": string,"currency": Database["public"]['Enums']["currency"],"guardrails"?: Json | null,"id": string,"marketplace": Database["public"]['Enums']["marketplace"],"name": string,"seller_id": string,"target_acos"?: number,"workspace_id": string
                   }
                   Update: {
-                    "autonomy_level"?: Database["public"]['Enums']["autonomy_level"],"connected_at"?: string,"currency"?: Database["public"]['Enums']["currency"],"id"?: string,"marketplace"?: Database["public"]['Enums']["marketplace"],"name"?: string,"seller_id"?: string,"target_acos"?: number,"workspace_id"?: string
+                    "autonomy_by_action"?: Json | null,"autonomy_level"?: Database["public"]['Enums']["autonomy_level"],"connected_at"?: string,"currency"?: Database["public"]['Enums']["currency"],"guardrails"?: Json | null,"id"?: string,"marketplace"?: Database["public"]['Enums']["marketplace"],"name"?: string,"seller_id"?: string,"target_acos"?: number,"workspace_id"?: string
                   }
                   Relationships: [
                     {
@@ -279,14 +279,14 @@ isOneToOne: false
                   ]
                 },"workspaces": {
                   Row: {
-                    "branding": Json | null,"created_at": string,"id": string,"kind": Database["public"]['Enums']["workspace_kind"],"name": string
+                    "agents_paused_at": string | null,"agents_paused_by": string | null,"branding": Json | null,"created_at": string,"id": string,"kind": Database["public"]['Enums']["workspace_kind"],"name": string
                   }
                   ComputedFields: never
                   Insert: {
-                    "branding"?: Json | null,"created_at"?: string,"id": string,"kind": Database["public"]['Enums']["workspace_kind"],"name": string
+                    "agents_paused_at"?: string | null,"agents_paused_by"?: string | null,"branding"?: Json | null,"created_at"?: string,"id": string,"kind": Database["public"]['Enums']["workspace_kind"],"name": string
                   }
                   Update: {
-                    "branding"?: Json | null,"created_at"?: string,"id"?: string,"kind"?: Database["public"]['Enums']["workspace_kind"],"name"?: string
+                    "agents_paused_at"?: string | null,"agents_paused_by"?: string | null,"branding"?: Json | null,"created_at"?: string,"id"?: string,"kind"?: Database["public"]['Enums']["workspace_kind"],"name"?: string
                   }
                   Relationships: [
                     
@@ -300,21 +300,36 @@ isOneToOne: false
             "commit_proposal_write":
 { Args: { "p_events": Json,"p_proposal": Json,"p_retire_listing_version_id"?: string }; Returns: boolean
                            },
+"connect_seller_account":
+{ Args: { "p_account": Json,"p_events": Json }; Returns: undefined
+                           },
 "file_agent_run_output":
 { Args: { "p_events": Json,"p_listing_version": Json,"p_proposal": Json,"p_review": Json,"p_run": Json }; Returns: boolean
                            },
 "finish_agent_run":
 { Args: { "p_events": Json,"p_proposal"?: Json,"p_run": Json }; Returns: boolean
                            },
+"remove_member":
+{ Args: { "p_events": Json,"p_member_id": string }; Returns: boolean
+                           },
+"save_member":
+{ Args: { "p_events": Json,"p_member": Json }; Returns: undefined
+                           },
+"set_agents_paused":
+{ Args: { "p_cancel_run_ids": (string)[],"p_events": Json,"p_finished_at": string,"p_member_id": string,"p_paused_at": string,"p_workspace_id": string }; Returns: boolean
+                           },
 "start_agent_run":
 { Args: { "p_events": Json,"p_run": Json }; Returns: undefined
+                           },
+"update_seller_account_settings":
+{ Args: { "p_account": Json,"p_events": Json }; Returns: boolean
                            },
 "update_workspace_branding":
 { Args: { "p_branding": Json,"p_events": Json,"p_workspace_id": string }; Returns: boolean
                            }
           }
           Enums: {
-            "ad_state": "enabled"|"paused"|"archived","agent_name": "listing_writer"|"listing_reviewer"|"bid_optimizer"|"budget_pacer"|"keyword_harvester"|"campaign_optimizer","agent_run_status": "queued"|"running"|"succeeded"|"failed"|"cancelled","agent_run_trigger": "schedule"|"manual"|"event","audit_action": "agent_run.started"|"agent_run.finished"|"proposal.created"|"proposal.edited"|"proposal.snoozed"|"proposal.approved"|"proposal.rejected"|"proposal.applied"|"proposal.failed"|"listing_version.published"|"member.invited"|"seller_account.connected"|"settings.updated","auto_target_type": "close_match"|"loose_match"|"substitutes"|"complements","autonomy_level": "L0"|"L1"|"L2"|"L3","bidding_strategy": "fixed"|"dynamic_down_only"|"dynamic_up_and_down","campaign_type": "sponsored_products"|"sponsored_brands"|"sponsored_display","currency": "USD"|"CAD"|"MXN"|"GBP"|"EUR"|"JPY","entity_type": "workspace"|"member"|"seller_account"|"product"|"listing_version"|"review"|"proposal"|"campaign"|"ad_group"|"target"|"agent_run","listing_version_status": "draft"|"proposed"|"live"|"superseded"|"rejected","marketplace": "US"|"CA"|"MX"|"UK"|"DE"|"FR"|"IT"|"ES"|"JP","match_type": "exact"|"phrase"|"broad","member_role": "owner"|"specialist"|"client_approver"|"viewer","metrics_entity_type": "product"|"campaign"|"target","product_status": "active"|"inactive"|"suppressed","proposal_risk": "low"|"medium"|"high","proposal_status": "pending_approval"|"approved"|"rejected"|"applied"|"failed"|"superseded","proposal_type": "listing_update"|"price_change"|"bid_change"|"budget_change"|"keyword_add"|"keyword_negate"|"target_pause"|"campaign_plan","target_kind": "keyword"|"product"|"auto","targeting_type": "auto"|"manual","workspace_kind": "merchant"|"agency"
+            "ad_state": "enabled"|"paused"|"archived","agent_name": "listing_writer"|"listing_reviewer"|"bid_optimizer"|"budget_pacer"|"keyword_harvester"|"campaign_optimizer","agent_run_status": "queued"|"running"|"succeeded"|"failed"|"cancelled","agent_run_trigger": "schedule"|"manual"|"event","audit_action": "agent_run.started"|"agent_run.finished"|"proposal.created"|"proposal.edited"|"proposal.snoozed"|"proposal.approved"|"proposal.rejected"|"proposal.applied"|"proposal.failed"|"listing_version.published"|"member.invited"|"seller_account.connected"|"settings.updated"|"member.updated"|"member.removed"|"agents.paused"|"agents.resumed","auto_target_type": "close_match"|"loose_match"|"substitutes"|"complements","autonomy_level": "L0"|"L1"|"L2"|"L3","bidding_strategy": "fixed"|"dynamic_down_only"|"dynamic_up_and_down","campaign_type": "sponsored_products"|"sponsored_brands"|"sponsored_display","currency": "USD"|"CAD"|"MXN"|"GBP"|"EUR"|"JPY","entity_type": "workspace"|"member"|"seller_account"|"product"|"listing_version"|"review"|"proposal"|"campaign"|"ad_group"|"target"|"agent_run","listing_version_status": "draft"|"proposed"|"live"|"superseded"|"rejected","marketplace": "US"|"CA"|"MX"|"UK"|"DE"|"FR"|"IT"|"ES"|"JP","match_type": "exact"|"phrase"|"broad","member_role": "owner"|"specialist"|"client_approver"|"viewer","metrics_entity_type": "product"|"campaign"|"target","product_status": "active"|"inactive"|"suppressed","proposal_risk": "low"|"medium"|"high","proposal_status": "pending_approval"|"approved"|"rejected"|"applied"|"failed"|"superseded","proposal_type": "listing_update"|"price_change"|"bid_change"|"budget_change"|"keyword_add"|"keyword_negate"|"target_pause"|"campaign_plan","target_kind": "keyword"|"product"|"auto","targeting_type": "auto"|"manual","workspace_kind": "merchant"|"agency"
           }
           CompositeTypes: {
             [_ in never]: never
@@ -430,7 +445,7 @@ export type CompositeTypes<
 export const Constants = {
   "public": {
           Enums: {
-            "ad_state": ["enabled", "paused", "archived"],"agent_name": ["listing_writer", "listing_reviewer", "bid_optimizer", "budget_pacer", "keyword_harvester", "campaign_optimizer"],"agent_run_status": ["queued", "running", "succeeded", "failed", "cancelled"],"agent_run_trigger": ["schedule", "manual", "event"],"audit_action": ["agent_run.started", "agent_run.finished", "proposal.created", "proposal.edited", "proposal.snoozed", "proposal.approved", "proposal.rejected", "proposal.applied", "proposal.failed", "listing_version.published", "member.invited", "seller_account.connected", "settings.updated"],"auto_target_type": ["close_match", "loose_match", "substitutes", "complements"],"autonomy_level": ["L0", "L1", "L2", "L3"],"bidding_strategy": ["fixed", "dynamic_down_only", "dynamic_up_and_down"],"campaign_type": ["sponsored_products", "sponsored_brands", "sponsored_display"],"currency": ["USD", "CAD", "MXN", "GBP", "EUR", "JPY"],"entity_type": ["workspace", "member", "seller_account", "product", "listing_version", "review", "proposal", "campaign", "ad_group", "target", "agent_run"],"listing_version_status": ["draft", "proposed", "live", "superseded", "rejected"],"marketplace": ["US", "CA", "MX", "UK", "DE", "FR", "IT", "ES", "JP"],"match_type": ["exact", "phrase", "broad"],"member_role": ["owner", "specialist", "client_approver", "viewer"],"metrics_entity_type": ["product", "campaign", "target"],"product_status": ["active", "inactive", "suppressed"],"proposal_risk": ["low", "medium", "high"],"proposal_status": ["pending_approval", "approved", "rejected", "applied", "failed", "superseded"],"proposal_type": ["listing_update", "price_change", "bid_change", "budget_change", "keyword_add", "keyword_negate", "target_pause", "campaign_plan"],"target_kind": ["keyword", "product", "auto"],"targeting_type": ["auto", "manual"],"workspace_kind": ["merchant", "agency"]
+            "ad_state": ["enabled", "paused", "archived"],"agent_name": ["listing_writer", "listing_reviewer", "bid_optimizer", "budget_pacer", "keyword_harvester", "campaign_optimizer"],"agent_run_status": ["queued", "running", "succeeded", "failed", "cancelled"],"agent_run_trigger": ["schedule", "manual", "event"],"audit_action": ["agent_run.started", "agent_run.finished", "proposal.created", "proposal.edited", "proposal.snoozed", "proposal.approved", "proposal.rejected", "proposal.applied", "proposal.failed", "listing_version.published", "member.invited", "seller_account.connected", "settings.updated", "member.updated", "member.removed", "agents.paused", "agents.resumed"],"auto_target_type": ["close_match", "loose_match", "substitutes", "complements"],"autonomy_level": ["L0", "L1", "L2", "L3"],"bidding_strategy": ["fixed", "dynamic_down_only", "dynamic_up_and_down"],"campaign_type": ["sponsored_products", "sponsored_brands", "sponsored_display"],"currency": ["USD", "CAD", "MXN", "GBP", "EUR", "JPY"],"entity_type": ["workspace", "member", "seller_account", "product", "listing_version", "review", "proposal", "campaign", "ad_group", "target", "agent_run"],"listing_version_status": ["draft", "proposed", "live", "superseded", "rejected"],"marketplace": ["US", "CA", "MX", "UK", "DE", "FR", "IT", "ES", "JP"],"match_type": ["exact", "phrase", "broad"],"member_role": ["owner", "specialist", "client_approver", "viewer"],"metrics_entity_type": ["product", "campaign", "target"],"product_status": ["active", "inactive", "suppressed"],"proposal_risk": ["low", "medium", "high"],"proposal_status": ["pending_approval", "approved", "rejected", "applied", "failed", "superseded"],"proposal_type": ["listing_update", "price_change", "bid_change", "budget_change", "keyword_add", "keyword_negate", "target_pause", "campaign_plan"],"target_kind": ["keyword", "product", "auto"],"targeting_type": ["auto", "manual"],"workspace_kind": ["merchant", "agency"]
           }
         }
 } as const

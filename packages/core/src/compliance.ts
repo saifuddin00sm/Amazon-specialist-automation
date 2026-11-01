@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { isSkippedPlanLine, parseCampaignPlanLine, type CampaignPlanLine } from "./campaign-plan";
 import { LISTING_LIMITS, utf8ByteLength, type ListingVersion, type ProductFacts } from "./catalog";
+import { DEFAULT_GUARDRAILS, type Guardrails } from "./workspace";
 import type { DiffEntry, ProposalType } from "./proposal";
 
 export const ComplianceStatusSchema = z.enum(["pass", "warn", "fail"]);
@@ -36,15 +37,13 @@ export const RESTRICTED_TERMS = [
 /** Characters Amazon does not allow in titles. */
 const TITLE_BANNED_CHARACTERS = /[!$?_{}^¬¦]/;
 
-/** Guardrails for bids and budgets, in the account's currency. */
+/**
+ * Amazon's own limits, the same for every account. The caps an owner sets per account (max bid,
+ * max daily budget, step sizes) are Guardrails in workspace.ts.
+ */
 export const AD_GUARDRAILS = {
   minBid: 0.02,
-  maxBid: 50,
-  /** A bid moving more than this share in one step gets a warning. */
-  maxBidStep: 0.5,
   minDailyBudget: 1,
-  /** A budget increase above this share in one step gets a warning. */
-  maxBudgetStep: 1,
   /** A price move above this share in one step gets a warning. */
   maxPriceStep: 0.2,
   keywordMaxLength: 80,
@@ -151,22 +150,28 @@ export type ComplianceInput = {
   /** Live listing copy, for listing_update proposals. */
   liveListing?: ListingCopy;
   facts?: ProductFacts;
+  /** The account's caps; DEFAULT_GUARDRAILS when left out. */
+  guardrails?: Guardrails;
 };
 
 /** Guardrail checks for any proposal type. An empty list means no checks apply. */
-export function checkProposalCompliance({ type, diff, liveListing, facts }: ComplianceInput): ComplianceCheck[] {
+export function checkProposalCompliance({ type, diff, liveListing, facts, guardrails = DEFAULT_GUARDRAILS }: ComplianceInput): ComplianceCheck[] {
+  const bidRange = (bid: number) => bidRangeCheck(bid, guardrails);
   switch (type) {
     case "listing_update":
       if (!liveListing) return [{ id: "live_listing", label: "Live listing", status: "fail", detail: "The live listing could not be loaded." }];
       return checkListingCompliance(proposedListingCopy(liveListing, diff), facts);
     case "bid_change":
-      return numericChanges(diff).flatMap(({ before, after }) => [bidRange(after), stepCheck("bid_step", "Bid change size", before, after, AD_GUARDRAILS.maxBidStep)]);
+      return numericChanges(diff).flatMap(({ before, after }) => [bidRange(after), stepCheck("bid_step", "Bid change size", before, after, guardrails.maxBidStep)]);
     case "budget_change":
       return numericChanges(diff).flatMap(({ before, after }) => [
         after < AD_GUARDRAILS.minDailyBudget
           ? { id: "budget_min", label: "Minimum daily budget", status: "fail" as const, detail: `Daily budget must be at least ${AD_GUARDRAILS.minDailyBudget}.` }
           : { id: "budget_min", label: "Minimum daily budget", status: "pass" as const },
-        stepCheck("budget_step", "Budget change size", before, after, AD_GUARDRAILS.maxBudgetStep),
+        after > guardrails.maxDailyBudget
+          ? { id: "budget_max", label: "Daily budget cap", status: "fail" as const, detail: `${after} is above the ${guardrails.maxDailyBudget} cap.` }
+          : { id: "budget_max", label: "Daily budget cap", status: "pass" as const, detail: `Cap is ${guardrails.maxDailyBudget}.` },
+        stepCheck("budget_step", "Budget change size", before, after, guardrails.maxBudgetStep),
       ]);
     case "price_change":
       return numericChanges(diff).flatMap(({ before, after }) => [
@@ -191,12 +196,12 @@ export function checkProposalCompliance({ type, diff, liveListing, facts }: Comp
     case "target_pause":
       return [];
     case "campaign_plan":
-      return checkCampaignPlan(diff);
+      return checkCampaignPlan(diff, guardrails);
   }
 }
 
 /** One check per guardrail over every line of the plan, so a long plan still reads as a short list. */
-function checkCampaignPlan(diff: DiffEntry[]): ComplianceCheck[] {
+function checkCampaignPlan(diff: DiffEntry[], guardrails: Guardrails): ComplianceCheck[] {
   const parsed = diff.map(parseCampaignPlanLine);
   const lines = parsed.filter((line): line is CampaignPlanLine => line !== undefined && !isSkippedPlanLine(line));
   const unreadable = parsed.filter((line) => line === undefined).length;
@@ -210,8 +215,8 @@ function checkCampaignPlan(diff: DiffEntry[]): ComplianceCheck[] {
 
   const bids = lines.flatMap((line) => (line.kind === "bid" ? [line.after] : line.kind === "keyword" && line.after ? [line.after.bid] : []));
   if (bids.length > 0) {
-    const outside = bids.filter((bid) => bidRange(bid).status === "fail").length;
-    const range = `${AD_GUARDRAILS.minBid} and ${AD_GUARDRAILS.maxBid}`;
+    const outside = bids.filter((bid) => bidRangeCheck(bid, guardrails).status === "fail").length;
+    const range = `${AD_GUARDRAILS.minBid} and ${guardrails.maxBid}`;
     checks.push(
       outside > 0
         ? { id: "bid_range", label: "Bids within guardrails", status: "fail", detail: `${outside} of ${bids.length} bids aren't between ${range}.` }
@@ -220,13 +225,13 @@ function checkCampaignPlan(diff: DiffEntry[]): ComplianceCheck[] {
   }
 
   const steps = lines.flatMap((line) =>
-    line.kind === "bid" && line.before > 0 && Math.abs(line.after - line.before) / line.before > AD_GUARDRAILS.maxBidStep ? [line] : [],
+    line.kind === "bid" && line.before > 0 && Math.abs(line.after - line.before) / line.before > guardrails.maxBidStep ? [line] : [],
   );
   if (lines.some((line) => line.kind === "bid")) {
     checks.push(
       steps.length > 0
-        ? { id: "bid_step", label: "Bid change size", status: "warn", detail: `${steps.length} ${steps.length === 1 ? "bid moves" : "bids move"} more than ±${Math.round(AD_GUARDRAILS.maxBidStep * 100)}% in one step.` }
-        : { id: "bid_step", label: "Bid change size", status: "pass", detail: `Every bid stays within ±${Math.round(AD_GUARDRAILS.maxBidStep * 100)}%.` },
+        ? { id: "bid_step", label: "Bid change size", status: "warn", detail: `${steps.length} ${steps.length === 1 ? "bid moves" : "bids move"} more than ±${Math.round(guardrails.maxBidStep * 100)}% in one step.` }
+        : { id: "bid_step", label: "Bid change size", status: "pass", detail: `Every bid stays within ±${Math.round(guardrails.maxBidStep * 100)}%.` },
     );
   }
 
@@ -254,9 +259,9 @@ export function hasBlockingFailure(checks: ComplianceCheck[]): boolean {
   return checks.some((check) => check.status === "fail");
 }
 
-function bidRange(bid: number): ComplianceCheck {
-  return bid < AD_GUARDRAILS.minBid || bid > AD_GUARDRAILS.maxBid
-    ? { id: "bid_range", label: "Bid within guardrails", status: "fail", detail: `Bids must be between ${AD_GUARDRAILS.minBid} and ${AD_GUARDRAILS.maxBid}.` }
+function bidRangeCheck(bid: number, guardrails: Guardrails): ComplianceCheck {
+  return bid < AD_GUARDRAILS.minBid || bid > guardrails.maxBid
+    ? { id: "bid_range", label: "Bid within guardrails", status: "fail", detail: `Bids must be between ${AD_GUARDRAILS.minBid} and ${guardrails.maxBid}.` }
     : { id: "bid_range", label: "Bid within guardrails", status: "pass" };
 }
 

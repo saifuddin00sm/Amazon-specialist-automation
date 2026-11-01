@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { autoApproves, filesProposals } from "./autonomy";
+import { autonomyFor } from "./workspace";
 import { breakEvenAcos, campaignPlanPath, maxCostPerClick, parseCampaignPlanLine } from "./campaign-plan";
 import type { ProductFacts } from "./catalog";
 import { checkListingCompliance, checkProposalCompliance, hasBlockingFailure, proposedListingCopy, type ListingCopy } from "./compliance";
@@ -74,6 +76,19 @@ describe("checkProposalCompliance", () => {
     expect(hasBlockingFailure(bid(0.01))).toBe(true);
     const budget = checkProposalCompliance({ type: "budget_change", diff: [{ path: "dailyBudget", before: 20, after: 50 }] });
     expect(budget.find((check) => check.id === "budget_step")?.status).toBe("warn");
+  });
+
+  it("applies the account's own caps: above the cap blocks, a big step warns", () => {
+    const guardrails = { maxBid: 2, maxBidStep: 0.2, maxDailyBudget: 100, maxBudgetStep: 0.5 };
+    const bid = (after: number) => checkProposalCompliance({ type: "bid_change", diff: [{ path: "bid", before: 1.8, after }], guardrails });
+    expect(hasBlockingFailure(bid(2.1))).toBe(true);
+    expect(bid(2).map((check) => check.status)).toEqual(["pass", "pass"]);
+    expect(bid(1).find((check) => check.id === "bid_step")?.status).toBe("warn");
+    const budget = (after: number) => checkProposalCompliance({ type: "budget_change", diff: [{ path: "dailyBudget", before: 80, after }], guardrails });
+    expect(budget(120).find((check) => check.id === "budget_max")?.status).toBe("fail");
+    expect(hasBlockingFailure(budget(100))).toBe(false);
+    const plan = checkProposalCompliance({ type: "campaign_plan", diff: [{ path: campaignPlanPath.bid("tgt_1"), before: 1.8, after: 2.5 }], guardrails });
+    expect(plan.find((check) => check.id === "bid_range")?.status).toBe("fail");
   });
 
   it("checks only the newly negated keywords", () => {
@@ -155,6 +170,28 @@ describe("breakEvenAcos", () => {
   it("caps cost per click at what an order is worth at that ACoS", () => {
     expect(maxCostPerClick(0.45, 40, 0.1)).toBeCloseTo(1.8);
     expect(maxCostPerClick(-0.2, 40, 0.1)).toBe(0);
+  });
+});
+
+describe("autonomy", () => {
+  const pass = [{ status: "pass" as const }];
+  const warn = [{ status: "pass" as const }, { status: "warn" as const }];
+  const fail = [{ status: "fail" as const }];
+
+  it("auto-approves at L2 only low-risk changes that pass every guardrail, at L3 anything not blocked", () => {
+    expect(autoApproves("L1", { risk: "low", checks: pass })).toBe(false);
+    expect(autoApproves("L2", { risk: "low", checks: pass })).toBe(true);
+    expect(autoApproves("L2", { risk: "medium", checks: pass })).toBe(false);
+    expect(autoApproves("L2", { risk: "low", checks: warn })).toBe(false);
+    expect(autoApproves("L3", { risk: "high", checks: warn })).toBe(true);
+    expect(autoApproves("L3", { risk: "low", checks: fail })).toBe(false);
+    expect(filesProposals("L0")).toBe(false);
+  });
+
+  it("uses an action type's own level before the account's", () => {
+    const account = { autonomyLevel: "L1" as const, autonomyByAction: { bid_change: "L3" as const } };
+    expect(autonomyFor(account, "bid_change")).toBe("L3");
+    expect(autonomyFor(account, "listing_update")).toBe("L1");
   });
 });
 
