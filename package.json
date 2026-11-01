@@ -8,9 +8,16 @@
     "typecheck": "turbo run typecheck",
     "lint": "turbo run lint",
     "test": "turbo run test",
-    "test:e2e": "turbo run test:e2e"
+    "test:e2e": "turbo run test:e2e",
+    "db:start": "supabase start -x studio,imgproxy,vector,logflare,realtime,storage-api,edge-runtime,supavisor",
+    "db:stop": "supabase stop",
+    "db:reset": "supabase db reset && pnpm db:seed",
+    "db:seed": "pnpm --filter @app/data db:seed",
+    "db:types": "supabase gen types typescript --local --schema public > packages/data/src/supabase/database.types.ts",
+    "test:supabase": "pnpm --filter @app/data test:supabase"
   },
   "devDependencies": {
+    "supabase": "2.121.0",
     "turbo": "^2.11.10",
     "typescript": "^5"
   }

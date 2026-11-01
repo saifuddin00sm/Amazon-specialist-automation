@@ -1,0 +1,8 @@
+<h2>Sign in to Specialist</h2>
+
+<p>Click the link below to sign in. It works once and expires in an hour.</p>
+
+<!-- RedirectTo is the app's origin (sent as emailRedirectTo); /auth/confirm verifies the token server side. -->
+<p><a href="{{ .RedirectTo }}/auth/confirm?token_hash={{ .TokenHash }}&type=email">Sign in</a></p>
+
+<p>If you didn't ask for this, you can ignore this email.</p>
