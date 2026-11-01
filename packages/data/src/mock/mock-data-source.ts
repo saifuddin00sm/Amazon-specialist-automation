@@ -1,5 +1,14 @@
-import { checkProposalCompliance, type AuditEvent, type MetricsDaily, type Proposal } from "@app/core";
+import {
+  checkProposalCompliance,
+  type AdMetricsDaily,
+  type AgentRun,
+  type AuditEvent,
+  type MetricsDaily,
+  type Proposal,
+} from "@app/core";
 import { AgentRunError, type DataSource } from "../data-source";
+import { campaignOptimizerWindow } from "../agents/campaign-optimizer";
+import { completeCampaignOptimizerRun, startCampaignOptimizerRun, type CampaignRunStore } from "../agents/campaign-runs";
 import {
   approveProposalWrite,
   rejectProposalWrite,
@@ -70,6 +79,51 @@ export function createMockDataSource(dataset: MockDataset, { now = () => new Dat
     proposals[index] = deepFreeze(proposal);
     appendAudit(events);
     return proposal;
+  };
+
+  const metricsDateRange = (sellerAccountId: string) => {
+    const dates = dataset.metricsDaily.filter((row) => row.sellerAccountId === sellerAccountId).map((row) => row.date);
+    if (dates.length === 0) return undefined;
+    return { from: dates.reduce((a, b) => (b < a ? b : a)), to: dates.reduce((a, b) => (b > a ? b : a)) };
+  };
+
+  /** What a campaign optimizer run reads about `campaignId`. */
+  const campaignRunStore = (campaignId: string): CampaignRunStore => {
+    const campaign = byId(dataset.campaigns, campaignId);
+    const account = campaign && byId(dataset.sellerAccounts, campaign.sellerAccountId);
+    const accountId = account?.id;
+    const campaigns = dataset.campaigns.filter((candidate) => candidate.sellerAccountId === accountId);
+    const campaignIds = new Set(campaigns.map((candidate) => candidate.id));
+    const adGroups = dataset.adGroups.filter((adGroup) => campaignIds.has(adGroup.campaignId));
+    const groupIds = new Set(adGroups.map((adGroup) => adGroup.id));
+    const ownGroupIds = new Set(adGroups.filter((adGroup) => adGroup.campaignId === campaignId).map((adGroup) => adGroup.id));
+    const targets = dataset.targets.filter((target) => groupIds.has(target.adGroupId));
+    const ownTargetIds = new Set(targets.filter((target) => ownGroupIds.has(target.adGroupId)).map((target) => target.id));
+    const window = accountId ? campaignOptimizerWindow(metricsDateRange(accountId)) : undefined;
+    const products = dataset.products.filter((product) => product.sellerAccountId === accountId);
+    const productIds = new Set(products.map((product) => product.id));
+    return {
+      members: dataset.members,
+      account,
+      campaign,
+      campaigns,
+      adGroups,
+      targets,
+      products,
+      productFacts: dataset.productFacts.filter((facts) => productIds.has(facts.productId)),
+      window,
+      metrics: window
+        ? dataset.metricsDaily.filter(
+            (row): row is AdMetricsDaily =>
+              row.entityType === "target" && ownTargetIds.has(row.entityId) && row.date >= window.from && row.date <= window.to,
+          )
+        : [],
+      pendingPlans: proposals.filter(
+        (proposal) => proposal.target.id === campaignId && proposal.type === "campaign_plan" && proposal.status === "pending_approval",
+      ),
+      runningRuns: agentRuns.filter((run) => run.subject?.id === campaignId && run.status === "running"),
+      nextId,
+    };
   };
 
   /** What the agent-run writes read from and append to. */
@@ -216,9 +270,7 @@ export function createMockDataSource(dataset: MockDataset, { now = () => new Dat
         .sort((a, b) => a.date.localeCompare(b.date));
     },
     async getMetricsDateRange(sellerAccountId) {
-      const dates = dataset.metricsDaily.filter((row) => row.sellerAccountId === sellerAccountId).map((row) => row.date);
-      if (dates.length === 0) return undefined;
-      return { from: dates.reduce((a, b) => (b < a ? b : a)), to: dates.reduce((a, b) => (b > a ? b : a)) };
+      return metricsDateRange(sellerAccountId);
     },
 
     async listAgentRuns({ workspaceId, sellerAccountId, subjectId, limit }) {
@@ -241,6 +293,12 @@ export function createMockDataSource(dataset: MockDataset, { now = () => new Dat
       appendAudit(events);
       return run;
     },
+    async startCampaignOptimizer({ campaignId, memberId }) {
+      const { run, events } = startCampaignOptimizerRun(campaignRunStore(campaignId), { campaignId, memberId, at: now() });
+      agentRuns.unshift(deepFreeze(run));
+      appendAudit(events);
+      return run;
+    },
     async completeAgentRun(runId) {
       const run = byId(agentRuns, runId);
       if (!run) throw new AgentRunError("not_found", "That agent run doesn't exist.");
@@ -249,11 +307,22 @@ export function createMockDataSource(dataset: MockDataset, { now = () => new Dat
         return { run, proposal: proposalId ? byId(proposals, proposalId) : undefined };
       }
 
+      const replaceRun = (finished: AgentRun) => {
+        agentRuns[agentRuns.findIndex((candidate) => candidate.id === run.id)] = deepFreeze(finished);
+      };
+      if (run.agent === "campaign_optimizer") {
+        const result = completeCampaignOptimizerRun(campaignRunStore(run.subject?.id ?? ""), run, now().toISOString());
+        if (result.proposal) proposals.unshift(deepFreeze(result.proposal));
+        replaceRun(result.run);
+        appendAudit(result.events);
+        return { run: result.run, proposal: result.proposal };
+      }
+
       const result = completeListingOptimizerRun(runStore(), run, now().toISOString());
       listingVersions.push(deepFreeze(result.version));
       reviews.unshift(deepFreeze(result.review));
       proposals.unshift(deepFreeze(result.proposal));
-      agentRuns[agentRuns.findIndex((candidate) => candidate.id === run.id)] = deepFreeze(result.run);
+      replaceRun(result.run);
       appendAudit(result.events);
       return { run: result.run, proposal: result.proposal };
     },

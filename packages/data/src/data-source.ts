@@ -74,6 +74,8 @@ export type LiveListingReview = { productId: string; review: Review };
 
 export type StartListingOptimizerInput = { productId: string; memberId: string };
 
+export type StartCampaignOptimizerInput = { campaignId: string; memberId: string };
+
 export type AgentRunErrorCode = "not_found" | "forbidden" | "conflict";
 
 /** An agent run the data source refused to start or complete. `message` is safe to show. */
@@ -145,8 +147,15 @@ export interface DataSource {
    */
   startListingOptimizer(input: StartListingOptimizerInput): Promise<AgentRun>;
   /**
+   * Starts the campaign optimizer on an enabled campaign as `memberId`. Returns the running AgentRun
+   * with its planned steps. Throws AgentRunError when the campaign already has a run in flight or a
+   * campaign plan waiting for approval.
+   */
+  startCampaignOptimizer(input: StartCampaignOptimizerInput): Promise<AgentRun>;
+  /**
    * Finishes a running agent run and files its output: for the listing optimizer, a proposed
-   * ListingVersion, its Review and a pending Proposal. Calling it on a finished run returns it as is.
+   * ListingVersion, its Review and a pending Proposal; for the campaign optimizer, a pending
+   * campaign_plan Proposal, unless it found nothing to change. Calling it on a finished run returns it as is.
    */
   completeAgentRun(runId: string): Promise<{ run: AgentRun; proposal?: Proposal }>;
   /** Newest first. */

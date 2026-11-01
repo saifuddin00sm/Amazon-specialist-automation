@@ -12,8 +12,10 @@ export type {
   ProposalQuery,
   RejectProposalInput,
   SnoozeProposalInput,
+  StartCampaignOptimizerInput,
   StartListingOptimizerInput,
 } from "./data-source";
+export { CAMPAIGN_OPTIMIZER_DAYS, adPerformance, campaignOptimizerWindow, type AdPerformance } from "./agents/campaign-optimizer";
 export {
   MOCK_ANCHOR_DATE,
   MOCK_METRIC_DAYS,

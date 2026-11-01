@@ -86,4 +86,18 @@ describe.skipIf(skip)("supabase DataSource as a signed-in member", () => {
     expect(proposal).toMatchObject({ status: "pending_approval", sellerAccountId: accountId });
     expect(await source.getProposal(proposal!.id)).toEqual(proposal);
   });
+
+  it("lets a client approver plan a campaign on their own account and approve the plan through row-level security", async () => {
+    const approver = dataset.members.find((member) => member.role === "client_approver")!;
+    const campaign = dataset.campaigns.find(
+      (candidate) => candidate.sellerAccountId === approver.sellerAccountIds[0] && candidate.state === "enabled",
+    )!;
+    const source = await signedIn(approver.email);
+
+    const run = await source.startCampaignOptimizer({ campaignId: campaign.id, memberId: approver.id });
+    const { proposal } = await source.completeAgentRun(run.id);
+    expect(proposal).toMatchObject({ type: "campaign_plan", status: "pending_approval", target: { id: campaign.id } });
+    const approved = await source.approveProposal({ proposalId: proposal!.id, memberId: approver.id });
+    expect(await source.getProposal(proposal!.id)).toEqual(approved);
+  });
 });

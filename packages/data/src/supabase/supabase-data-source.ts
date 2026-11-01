@@ -1,7 +1,16 @@
-import { checkProposalCompliance, type AuditEvent, type ListingVersion, type MetricsDaily, type Proposal } from "@app/core";
+import {
+  checkProposalCompliance,
+  type AdMetricsDaily,
+  type AuditEvent,
+  type ListingVersion,
+  type MetricsDaily,
+  type Proposal,
+} from "@app/core";
 import type { PostgrestError, SupabaseClient } from "@supabase/supabase-js";
 import { AgentRunError, type DataSource, type LiveListingReview } from "../data-source";
 import { completeListingOptimizerRun, startListingOptimizerRun, type RunStore } from "../agents/agent-runs";
+import { campaignOptimizerWindow } from "../agents/campaign-optimizer";
+import { completeCampaignOptimizerRun, startCampaignOptimizerRun, type CampaignRunStore } from "../agents/campaign-runs";
 import {
   ProposalWriteError,
   approveProposalWrite,
@@ -183,6 +192,68 @@ export function createSupabaseDataSource(
     };
   };
 
+  const getMetricsDateRange = async (sellerAccountId: string) => {
+    const edge = async (ascending: boolean) =>
+      must(
+        await db.from("metrics_daily").select("date").eq("seller_account_id", sellerAccountId).order("date", { ascending }).limit(1).maybeSingle(),
+      )?.date;
+    const [from, to] = await Promise.all([edge(true), edge(false)]);
+    return from && to ? { from, to } : undefined;
+  };
+
+  /** What the campaign optimizer reads about one campaign, shaped like the mock's in-memory store. */
+  const campaignRunStore = async (campaignId: string, memberId?: string): Promise<CampaignRunStore> => {
+    const campaignRow = must(await db.from("campaigns").select().eq("id", campaignId).maybeSingle());
+    const accountId = campaignRow?.seller_account_id ?? "";
+    const [accountRow, campaigns, adGroups, targets, products, facts, available, member, running, pending] = await Promise.all([
+      db.from("seller_accounts").select().eq("id", accountId).maybeSingle(),
+      selectAll((from, to) => db.from("campaigns").select().eq("seller_account_id", accountId).order("id").range(from, to)),
+      selectAll((from, to) => db.from("ad_groups").select().eq("seller_account_id", accountId).order("id").range(from, to)),
+      selectAll((from, to) => db.from("targets").select().eq("seller_account_id", accountId).order("id").range(from, to)),
+      selectAll((from, to) => db.from("products").select().eq("seller_account_id", accountId).order("id").range(from, to)),
+      selectAll((from, to) => db.from("product_facts").select().eq("seller_account_id", accountId).order("product_id").range(from, to)),
+      getMetricsDateRange(accountId),
+      memberId ? writingMember(memberId) : undefined,
+      db.from("agent_runs").select().eq("subject_id", campaignId).eq("status", "running"),
+      db.from("proposals").select().eq("target_id", campaignId).eq("type", "campaign_plan").eq("status", "pending_approval"),
+    ]);
+    const account = must(accountRow);
+    const ownGroupIds = new Set(adGroups.filter((row) => row.campaign_id === campaignId).map((row) => row.id));
+    const ownTargetIds = targets.filter((row) => ownGroupIds.has(row.ad_group_id)).map((row) => row.id);
+    const window = campaignOptimizerWindow(available);
+    const metrics =
+      window && ownTargetIds.length > 0
+        ? await selectAll((from, to) =>
+            db
+              .from("metrics_daily")
+              .select()
+              .eq("seller_account_id", accountId)
+              .eq("entity_type", "target")
+              .in("entity_id", ownTargetIds)
+              .gte("date", window.from)
+              .lte("date", window.to)
+              .order("date")
+              .order("entity_id")
+              .range(from, to),
+          )
+        : [];
+    return {
+      members: member ? [member] : [],
+      account: account ? sellerAccountFromRow(account) : undefined,
+      campaign: campaignRow ? campaignFromRow(campaignRow) : undefined,
+      campaigns: campaigns.map(campaignFromRow),
+      adGroups: adGroups.map(adGroupFromRow),
+      targets: targets.map(targetFromRow),
+      products: products.map(productFromRow),
+      productFacts: facts.map(productFactsFromRow),
+      window,
+      metrics: metrics.map((row) => metricsDailyFromRow(row) as AdMetricsDaily),
+      pendingPlans: (must(pending) ?? []).map(proposalFromRow),
+      runningRuns: (must(running) ?? []).map(agentRunFromRow),
+      nextId: { run: () => newId("run"), proposal: () => newId("prop") },
+    };
+  };
+
   const scopeOf = (record: { workspaceId: string; sellerAccountId: string }) => ({
     workspaceId: record.workspaceId,
     sellerAccountId: record.sellerAccountId,
@@ -345,14 +416,7 @@ export function createSupabaseDataSource(
       });
       return rows.map((row) => metricsDailyFromRow(row) as Extract<MetricsDaily, { entityType: T }>);
     },
-    async getMetricsDateRange(sellerAccountId) {
-      const edge = async (ascending: boolean) =>
-        must(
-          await db.from("metrics_daily").select("date").eq("seller_account_id", sellerAccountId).order("date", { ascending }).limit(1).maybeSingle(),
-        )?.date;
-      const [from, to] = await Promise.all([edge(true), edge(false)]);
-      return from && to ? { from, to } : undefined;
-    },
+    getMetricsDateRange,
 
     async listAgentRuns({ workspaceId, sellerAccountId, subjectId, limit }) {
       return (
@@ -372,6 +436,13 @@ export function createSupabaseDataSource(
       must({ data: null, error });
       return run;
     },
+    async startCampaignOptimizer({ campaignId, memberId }) {
+      const { run, events } = startCampaignOptimizerRun(await campaignRunStore(campaignId, memberId), { campaignId, memberId, at: now() });
+      const { error } = await db.rpc("start_agent_run", { p_run: agentRunToRow(run), p_events: withIds(events) });
+      if (error?.code === UNIQUE_VIOLATION) throw new AgentRunError("conflict", "The optimizer is already running on this campaign.");
+      must({ data: null, error });
+      return run;
+    },
     async completeAgentRun(runId) {
       const run = await getAgentRun(runId);
       if (!run) throw new AgentRunError("not_found", "That agent run doesn't exist.");
@@ -380,6 +451,26 @@ export function createSupabaseDataSource(
         return { run: latest, proposal: proposalId ? await getProposal(proposalId) : undefined };
       };
       if (run.status !== "running") return finished(run);
+      // Another request completed it first; return what that one filed.
+      const filedElsewhere = async () => {
+        const latest = await getAgentRun(runId);
+        if (!latest) throw new AgentRunError("not_found", "That agent run doesn't exist.");
+        return finished(latest);
+      };
+
+      if (run.agent === "campaign_optimizer") {
+        const result = completeCampaignOptimizerRun(await campaignRunStore(run.subject?.id ?? ""), run, now().toISOString());
+        const { data: filed, error } = await db.rpc("finish_agent_run", {
+          p_run: agentRunToRow(result.run),
+          p_events: withIds(result.events),
+          ...(result.proposal ? { p_proposal: proposalToRow(result.proposal) } : {}),
+        });
+        if (error?.code === UNIQUE_VIOLATION) {
+          throw new AgentRunError("conflict", "A plan for this campaign is already waiting for approval.");
+        }
+        if (!must({ data: filed, error })) return filedElsewhere();
+        return { run: result.run, proposal: result.proposal };
+      }
 
       const store = await runStore(run.subject?.id ?? "");
       const result = completeListingOptimizerRun(store, run, now().toISOString());
@@ -394,12 +485,7 @@ export function createSupabaseDataSource(
       if (error?.code === UNIQUE_VIOLATION) {
         throw new AgentRunError("conflict", "A listing proposal for this product is already waiting for approval.");
       }
-      if (!must({ data: filed, error })) {
-        // Another request completed it first; return what that one filed.
-        const latest = await getAgentRun(runId);
-        if (!latest) throw new AgentRunError("not_found", "That agent run doesn't exist.");
-        return finished(latest);
-      }
+      if (!must({ data: filed, error })) return filedElsewhere();
       return { run: result.run, proposal: result.proposal };
     },
     async listAuditEvents({ workspaceId, sellerAccountId, limit }) {

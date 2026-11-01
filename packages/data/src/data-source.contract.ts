@@ -377,5 +377,87 @@ export function describeDataSourceContract(
         await expect(source.completeAgentRun("nope")).rejects.toMatchObject({ code: "not_found" });
       });
     });
+
+    describe("campaign optimizer runs", () => {
+      const subject = () => {
+        const { merchant } = workspaces();
+        // The merchant's first enabled manual Sponsored Products campaign: it gets bids and keywords.
+        const campaign = dataset().campaigns.find(
+          (candidate) =>
+            candidate.sellerAccountId === merchantAccount().id &&
+            candidate.state === "enabled" &&
+            candidate.type === "sponsored_products" &&
+            candidate.targetingType === "manual",
+        )!;
+        const paused = dataset().campaigns.find((candidate) => candidate.state === "paused")!;
+        return { merchant, campaign, paused, owner: memberOf(merchant.id, "owner"), viewer: memberOf(merchant.id, "viewer") };
+      };
+
+      it("starts a running run on a campaign and audits it", async () => {
+        const { source } = await setup();
+        const { merchant, campaign, owner } = subject();
+        const run = await source.startCampaignOptimizer({ campaignId: campaign.id, memberId: owner.id });
+
+        expect(AgentRunSchema.safeParse(run).success).toBe(true);
+        expect(run).toMatchObject({ agent: "campaign_optimizer", status: "running", subject: { type: "campaign", id: campaign.id } });
+        expect(run.steps?.some((step) => step.kind === "plan" && step.changes.length > 0)).toBe(true);
+        expect(await source.listAgentRuns({ workspaceId: merchant.id, subjectId: campaign.id })).toEqual([run]);
+        const [event] = await source.listAuditEvents({ workspaceId: merchant.id, limit: 1 });
+        expect(event).toMatchObject({ action: "agent_run.started", entity: { id: run.id }, metadata: { requestedBy: owner.id } });
+      });
+
+      it("files a pending campaign plan that is approved like any proposal, lines skipped", async () => {
+        const { source } = await setup();
+        const { merchant, campaign, owner } = subject();
+        const run = await source.startCampaignOptimizer({ campaignId: campaign.id, memberId: owner.id });
+        const { run: finished, proposal } = await source.completeAgentRun(run.id);
+
+        expect(finished).toMatchObject({ status: "succeeded", proposalIds: [proposal!.id] });
+        expect(finished.steps?.at(-1)).toMatchObject({ kind: "awaiting_approval", proposalId: proposal!.id });
+        expect(proposal).toMatchObject({
+          type: "campaign_plan",
+          status: "pending_approval",
+          target: { type: "campaign", id: campaign.id },
+          createdBy: { type: "agent", agent: "campaign_optimizer", agentRunId: run.id },
+        });
+        expect(proposal!.diff).toEqual(run.steps!.flatMap((step) => (step.kind === "plan" ? step.changes : [])));
+        expect((await source.listProposals({ workspaceId: merchant.id, status: "pending_approval" }))[0]?.id).toBe(proposal!.id);
+        expect(await source.completeAgentRun(run.id)).toEqual({ run: finished, proposal });
+
+        // Skip the first line by setting it back to what it was.
+        const [skipped, ...kept] = proposal!.diff;
+        const approved = await source.approveProposal({
+          proposalId: proposal!.id,
+          memberId: owner.id,
+          edits: [{ path: skipped!.path, after: skipped!.before }],
+        });
+        expect(approved).toMatchObject({ status: "approved", diff: kept, originalDiff: proposal!.diff });
+        const [approvedEvent, editedEvent] = await latestEvents(source, merchant.id, 2);
+        expect(approvedEvent).toMatchObject({ action: "proposal.approved", metadata: { edited: true } });
+        expect(editedEvent).toMatchObject({
+          action: "proposal.edited",
+          metadata: { changes: [{ path: skipped!.path, agent: skipped!.after, final: skipped!.before }] },
+        });
+
+        // Approving records the decision; Amazon and the live campaign are untouched until it is applied.
+        const bidLine = kept.find((entry) => entry.path.startsWith("targets."));
+        const targetId = bidLine?.path.split(".")[1];
+        if (targetId) expect((await source.getTarget(targetId))?.bid).toBe(bidLine!.before);
+      });
+
+      it("refuses viewers, paused campaigns, a second run in flight and a second plan", async () => {
+        const { source } = await setup();
+        const { campaign, paused, owner, viewer } = subject();
+        const pausedOwner = memberOf(dataset().sellerAccounts.find((account) => account.id === paused.sellerAccountId)!.workspaceId, "owner");
+        await expect(source.startCampaignOptimizer({ campaignId: campaign.id, memberId: viewer.id })).rejects.toMatchObject({ code: "forbidden" });
+        await expect(source.startCampaignOptimizer({ campaignId: paused.id, memberId: pausedOwner.id })).rejects.toMatchObject({ code: "conflict" });
+        await expect(source.startCampaignOptimizer({ campaignId: "nope", memberId: owner.id })).rejects.toMatchObject({ code: "not_found" });
+
+        const run = await source.startCampaignOptimizer({ campaignId: campaign.id, memberId: owner.id });
+        await expect(source.startCampaignOptimizer({ campaignId: campaign.id, memberId: owner.id })).rejects.toMatchObject({ code: "conflict" });
+        await source.completeAgentRun(run.id);
+        await expect(source.startCampaignOptimizer({ campaignId: campaign.id, memberId: owner.id })).rejects.toMatchObject({ code: "conflict" });
+      });
+    });
   });
 }
