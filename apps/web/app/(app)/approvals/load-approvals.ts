@@ -9,8 +9,9 @@ import {
   type SellerAccount,
 } from "@app/core";
 import type { DataSource } from "@app/data";
+import { planLabels, type PlanLabels } from "@/lib/campaigns";
 import { getDataSource } from "@/lib/data";
-import { targetLabel } from "@/lib/format";
+import { CAMPAIGN_TYPE_LABELS, targetLabel } from "@/lib/format";
 
 /** Everything the approvals UI needs to show and decide one proposal. */
 export type ApprovalItem = {
@@ -22,6 +23,8 @@ export type ApprovalItem = {
   /** Live listing copy, for listing updates. Compliance checks the full listing, not only the diff. */
   liveListing?: ListingCopy;
   facts?: ProductFacts;
+  /** Ad group and target names for the ids in a campaign plan's diff. */
+  planLabels?: PlanLabels;
   compliance: ComplianceCheck[];
   snoozed: boolean;
 };
@@ -98,7 +101,7 @@ async function toItem(
 async function loadContext(
   dataSource: DataSource,
   proposal: Proposal,
-): Promise<Pick<ApprovalItem, "subject" | "review" | "liveListing" | "facts">> {
+): Promise<Pick<ApprovalItem, "subject" | "review" | "liveListing" | "facts" | "planLabels">> {
   const { target } = proposal;
   const review = proposal.reviewId ? await dataSource.getReview(proposal.reviewId) : undefined;
 
@@ -141,6 +144,18 @@ async function loadContext(
     }
     case "campaign": {
       const campaign = await dataSource.getCampaign(target.id);
+      if (proposal.type === "campaign_plan") {
+        const adGroups = await dataSource.listAdGroups(target.id);
+        const targets = (await Promise.all(adGroups.map((adGroup) => dataSource.listTargets(adGroup.id)))).flat();
+        return {
+          subject: {
+            label: campaign?.name ?? target.id,
+            detail: campaign ? `${CAMPAIGN_TYPE_LABELS[campaign.type]}, ${campaign.targetingType} targeting` : undefined,
+          },
+          review,
+          planLabels: planLabels(adGroups, targets),
+        };
+      }
       return {
         subject: {
           label: campaign?.name ?? target.id,

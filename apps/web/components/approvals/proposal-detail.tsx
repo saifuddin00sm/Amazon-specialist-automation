@@ -9,6 +9,7 @@ import {
   type DiffEntry,
 } from "@app/core";
 import { AlarmClock, Check, ChevronDown, PencilLine, X } from "lucide-react";
+import Link from "next/link";
 import { useMemo, useState } from "react";
 import type { ApprovalItem } from "@/app/(app)/approvals/load-approvals";
 import { AIGeneratedBadge } from "@/components/ai-generated-badge";
@@ -24,6 +25,8 @@ import { Input } from "@/components/ui/input";
 import { Kbd } from "@/components/ui/kbd";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { PROPOSAL_TYPE_LABELS, formatDateTime } from "@/lib/format";
+import { CampaignPlanDiff } from "./campaign-plan-diff";
+import { CampaignPlanEditor } from "./campaign-plan-editor";
 import { DiffView } from "./diff-view";
 import { ProposalEditor } from "./proposal-editor";
 import { RejectForm } from "./reject-form";
@@ -63,6 +66,9 @@ export function ProposalDetail({
   const [note, setNote] = useState("");
   const editing = mode === "edit";
   const editable = EDITABLE_PROPOSAL_TYPES.has(proposal.type);
+  const plan = proposal.type === "campaign_plan";
+  const updateDraft = (path: string, after: DiffEntry["after"]) =>
+    setDraft((current) => current.map((entry) => (entry.path === path ? { ...entry, after } : entry)));
 
   const draftChecks = useMemo(
     () =>
@@ -134,7 +140,7 @@ export function ProposalDetail({
               <span className="text-xs text-muted-foreground">
                 {blocked
                   ? "Fix the failing compliance checks to approve."
-                  : `${edits.length} ${edits.length === 1 ? "field" : "fields"} changed`}
+                  : `${edits.length} ${plan ? (edits.length === 1 ? "line" : "lines") : edits.length === 1 ? "field" : "fields"} changed`}
               </span>
             </div>
           </div>
@@ -189,11 +195,13 @@ export function ProposalDetail({
         aside={!editing && <span className="text-xs text-muted-foreground">Before · After</span>}
       >
         {editing ? (
-          <ProposalEditor
-            draft={draft}
-            currency={account.currency}
-            onChange={(path, after) => setDraft((current) => current.map((entry) => (entry.path === path ? { ...entry, after } : entry)))}
-          />
+          plan ? (
+            <CampaignPlanEditor draft={draft} original={proposal.diff} labels={item.planLabels} currency={account.currency} onChange={updateDraft} />
+          ) : (
+            <ProposalEditor draft={draft} currency={account.currency} onChange={updateDraft} />
+          )
+        ) : plan ? (
+          <CampaignPlanDiff diff={proposal.diff} labels={item.planLabels} currency={account.currency} />
         ) : (
           <DiffView diff={proposal.diff} currency={account.currency} />
         )}
@@ -210,6 +218,15 @@ export function ProposalDetail({
         <Section title="Review">
           <p className="text-sm text-muted-foreground">
             Rubric reviews cover listing copy. This proposal is checked by its guardrails above.
+            {plan && (
+              <>
+                {" "}
+                <Link className="font-medium text-foreground underline underline-offset-4" href={`/campaigns/${proposal.target.id}`}>
+                  See the plan on the campaign
+                </Link>
+                .
+              </>
+            )}
           </p>
         </Section>
       )}
