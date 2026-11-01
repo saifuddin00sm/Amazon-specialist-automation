@@ -201,6 +201,13 @@ function StepOutcome({ step, run }: { step: AgentRunStep; run: AgentRun }) {
           Filing proposal
         </span>
       ) : null;
+    case "plan":
+      // The first pass only reads; the others report what they found.
+      return step.changes.length > 0 ? (
+        <Badge variant="outline" className="tabular-nums">
+          {step.changes.length} {step.changes.length === 1 ? "change" : "changes"}
+        </Badge>
+      ) : null;
     case "draft":
       return null;
   }

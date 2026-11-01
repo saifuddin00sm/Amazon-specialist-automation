@@ -1,4 +1,13 @@
-import type { AgentName, Currency, FreshnessSource, ProposalRisk, ProposalType, RubricCriterion, Target } from "@app/core";
+import type {
+  AgentName,
+  CampaignType,
+  Currency,
+  FreshnessSource,
+  ProposalRisk,
+  ProposalType,
+  RubricCriterion,
+  Target,
+} from "@app/core";
 
 // Times render in UTC so the server and the browser produce the same markup.
 const dateTime = new Intl.DateTimeFormat("en-US", {
@@ -53,6 +62,7 @@ export const AGENT_LABELS: Record<AgentName, string> = {
   bid_optimizer: "Bid optimizer",
   budget_pacer: "Budget pacer",
   keyword_harvester: "Keyword harvester",
+  campaign_optimizer: "Campaign optimizer",
 };
 
 export const PROPOSAL_TYPE_LABELS: Record<ProposalType, string> = {
@@ -63,6 +73,13 @@ export const PROPOSAL_TYPE_LABELS: Record<ProposalType, string> = {
   keyword_add: "Add keyword",
   keyword_negate: "Negate keyword",
   target_pause: "Pause target",
+  campaign_plan: "Campaign plan",
+};
+
+export const CAMPAIGN_TYPE_LABELS: Record<CampaignType, string> = {
+  sponsored_products: "Sponsored Products",
+  sponsored_brands: "Sponsored Brands",
+  sponsored_display: "Sponsored Display",
 };
 
 export const RISK_LABELS: Record<ProposalRisk, string> = { low: "Low risk", medium: "Medium risk", high: "High risk" };

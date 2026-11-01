@@ -10,6 +10,8 @@ export const ProposalTypeSchema = z.enum([
   "keyword_add",
   "keyword_negate",
   "target_pause",
+  /** Several bid, keyword and negative changes to one campaign, decided together. */
+  "campaign_plan",
 ]);
 export type ProposalType = z.infer<typeof ProposalTypeSchema>;
 
@@ -114,11 +116,13 @@ export const EDITABLE_PROPOSAL_TYPES: ReadonlySet<ProposalType> = new Set([
   "budget_change",
   "keyword_add",
   "keyword_negate",
+  "campaign_plan",
 ]);
 
 /**
  * Replaces `after` values in a diff. Every edit must name a path already in the diff and keep the
- * value's shape (string stays string, array stays array, ...). Returns an error message otherwise.
+ * value's shape (string stays string, array stays array, ...), or set it back to `before`, which
+ * drops that change. Returns an error message otherwise, or when no change is left.
  */
 export function applyDiffEdits(diff: DiffEntry[], edits: DiffEdit[]): { diff: DiffEntry[] } | { error: string } {
   const byPath = new Map(edits.map((edit) => [edit.path, edit.after]));
@@ -133,12 +137,23 @@ export function applyDiffEdits(diff: DiffEntry[], edits: DiffEdit[]): { diff: Di
       continue;
     }
     const after = byPath.get(entry.path) ?? null;
+    if (sameJson(after, entry.before)) continue;
     if (jsonShape(after) !== jsonShape(entry.after)) {
       return { error: `"${entry.path}" must stay a ${jsonShape(entry.after)}.` };
     }
     next.push({ ...entry, after });
   }
+  if (next.length === 0) return { error: "Every change was undone. Reject the proposal instead." };
   return { diff: next };
+}
+
+/** True when a diff entry changes nothing: its `after` is its `before`. */
+export function isUnchanged(entry: Pick<DiffEntry, "before" | "after">): boolean {
+  return sameJson(entry.after, entry.before);
+}
+
+function sameJson(a: unknown, b: unknown): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
 }
 
 function jsonShape(value: unknown): string {

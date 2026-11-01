@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { breakEvenAcos, campaignPlanPath, maxCostPerClick, parseCampaignPlanLine } from "./campaign-plan";
 import type { ProductFacts } from "./catalog";
 import { checkListingCompliance, checkProposalCompliance, hasBlockingFailure, proposedListingCopy, type ListingCopy } from "./compliance";
 import { freshnessAgeHours, isStale } from "./freshness";
@@ -100,6 +101,60 @@ describe("applyDiffEdits", () => {
     expect(applyDiffEdits(diff, [{ path: "price", after: 3 }])).toHaveProperty("error");
     expect(applyDiffEdits(diff, [{ path: "title", after: "a" }, { path: "title", after: "b" }])).toHaveProperty("error");
     expect(applyDiffEdits(diff, [{ path: "bullets", after: "not a list" }])).toHaveProperty("error");
+  });
+
+  it("drops a change set back to its before value, whatever its shape, but not every change", () => {
+    const plan: DiffEntry[] = [
+      { path: campaignPlanPath.bid("tgt_1"), before: 1, after: 0.7 },
+      { path: campaignPlanPath.keyword("ag_1", 0), before: null, after: { keyword: "water bottle", matchType: "exact", bid: 0.8 } },
+    ];
+    expect(applyDiffEdits(plan, [{ path: plan[1]!.path, after: null }])).toEqual({ diff: [plan[0]] });
+    expect(applyDiffEdits(plan, [{ path: plan[0]!.path, after: 1 }, { path: plan[1]!.path, after: null }])).toHaveProperty("error");
+  });
+});
+
+describe("campaign plan guardrails", () => {
+  const plan: DiffEntry[] = [
+    { path: campaignPlanPath.bid("tgt_1"), before: 1, after: 0.7 },
+    { path: campaignPlanPath.keyword("ag_1", 0), before: null, after: { keyword: "water bottle", matchType: "exact", bid: 0.8 } },
+    { path: campaignPlanPath.negative("ag_2", 0), before: null, after: { keyword: "water bottle", matchType: "exact" } },
+  ];
+  const check = (diff: DiffEntry[]) => checkProposalCompliance({ type: "campaign_plan", diff });
+  const status = (diff: DiffEntry[], id: string) => check(diff).find((candidate) => candidate.id === id)?.status;
+
+  it("reads each line of a plan and skips unchanged ones", () => {
+    expect(parseCampaignPlanLine(plan[0]!)).toEqual({ kind: "bid", path: plan[0]!.path, targetId: "tgt_1", before: 1, after: 0.7 });
+    expect(parseCampaignPlanLine({ ...plan[1]!, after: null })).toMatchObject({ kind: "keyword", adGroupId: "ag_1", after: null });
+    expect(parseCampaignPlanLine({ path: "dailyBudget", before: 1, after: 2 })).toBeUndefined();
+    expect(parseCampaignPlanLine({ ...plan[2]!, after: { keyword: "x", matchType: "broad" } })).toBeUndefined();
+    expect(check(plan).every((candidate) => candidate.status === "pass")).toBe(true);
+  });
+
+  it("checks every bid and keyword in the plan in one check each", () => {
+    expect(status([{ ...plan[0]!, after: 60 }], "bid_range")).toBe("fail");
+    expect(status([{ ...plan[0]!, after: 1.9 }], "bid_step")).toBe("warn");
+    expect(status([{ ...plan[1]!, after: { keyword: " ", matchType: "exact", bid: 0.8 } }], "keyword_format")).toBe("fail");
+  });
+
+  it("fails a plan that adds and negates one keyword in the same ad group, or skips every line", () => {
+    const sameGroup = { ...plan[2]!, path: campaignPlanPath.negative("ag_1", 0) };
+    expect(status([plan[1]!, sameGroup], "plan_conflicts")).toBe("fail");
+    expect(status([plan[1]!, plan[2]!], "plan_conflicts")).toBe("pass");
+    expect(status([{ ...plan[0]!, after: 1 }, { ...plan[1]!, after: null }], "plan_lines")).toBe("fail");
+    expect(status([{ path: "targets.x.state", before: "enabled", after: "paused" }], "plan_lines")).toBe("fail");
+  });
+});
+
+describe("breakEvenAcos", () => {
+  it("is the margin before ad spend as a share of the price", () => {
+    expect(breakEvenAcos({ price: 40, unitCost: 10, fulfillmentFee: 6, referralFeeRate: 0.15 })).toBeCloseTo(0.45);
+    expect(breakEvenAcos({ price: 10, unitCost: 9, fulfillmentFee: 3, referralFeeRate: 0.15 })).toBeLessThan(0);
+    expect(breakEvenAcos({ price: 0, unitCost: 1, fulfillmentFee: 1, referralFeeRate: 0.15 })).toBeUndefined();
+  });
+
+  it("caps cost per click at what an order is worth at that ACoS", () => {
+    expect(maxCostPerClick(0.45, 40, 0.1)).toBeCloseTo(1.8);
+    expect(maxCostPerClick(-0.2, 40, 0.1)).toBe(0);
   });
 });
 

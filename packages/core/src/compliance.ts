@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isSkippedPlanLine, parseCampaignPlanLine, type CampaignPlanLine } from "./campaign-plan";
 import { LISTING_LIMITS, utf8ByteLength, type ListingVersion, type ProductFacts } from "./catalog";
 import type { DiffEntry, ProposalType } from "./proposal";
 
@@ -189,7 +190,64 @@ export function checkProposalCompliance({ type, diff, liveListing, facts }: Comp
       });
     case "target_pause":
       return [];
+    case "campaign_plan":
+      return checkCampaignPlan(diff);
   }
+}
+
+/** One check per guardrail over every line of the plan, so a long plan still reads as a short list. */
+function checkCampaignPlan(diff: DiffEntry[]): ComplianceCheck[] {
+  const parsed = diff.map(parseCampaignPlanLine);
+  const lines = parsed.filter((line): line is CampaignPlanLine => line !== undefined && !isSkippedPlanLine(line));
+  const unreadable = parsed.filter((line) => line === undefined).length;
+  const checks: ComplianceCheck[] = [
+    unreadable > 0
+      ? { id: "plan_lines", label: "Plan changes", status: "fail", detail: `${unreadable} ${unreadable === 1 ? "change isn't" : "changes aren't"} a bid, keyword or negative keyword.` }
+      : lines.length === 0
+        ? { id: "plan_lines", label: "Plan changes", status: "fail", detail: "Every change is skipped. Reject the plan instead." }
+        : { id: "plan_lines", label: "Plan changes", status: "pass", detail: `${lines.length} ${lines.length === 1 ? "change" : "changes"}.` },
+  ];
+
+  const bids = lines.flatMap((line) => (line.kind === "bid" ? [line.after] : line.kind === "keyword" && line.after ? [line.after.bid] : []));
+  if (bids.length > 0) {
+    const outside = bids.filter((bid) => bidRange(bid).status === "fail").length;
+    const range = `${AD_GUARDRAILS.minBid} and ${AD_GUARDRAILS.maxBid}`;
+    checks.push(
+      outside > 0
+        ? { id: "bid_range", label: "Bids within guardrails", status: "fail", detail: `${outside} of ${bids.length} bids aren't between ${range}.` }
+        : { id: "bid_range", label: "Bids within guardrails", status: "pass", detail: `${bids.length} ${bids.length === 1 ? "bid" : "bids"} between ${range}.` },
+    );
+  }
+
+  const steps = lines.flatMap((line) =>
+    line.kind === "bid" && line.before > 0 && Math.abs(line.after - line.before) / line.before > AD_GUARDRAILS.maxBidStep ? [line] : [],
+  );
+  if (lines.some((line) => line.kind === "bid")) {
+    checks.push(
+      steps.length > 0
+        ? { id: "bid_step", label: "Bid change size", status: "warn", detail: `${steps.length} ${steps.length === 1 ? "bid moves" : "bids move"} more than ±${Math.round(AD_GUARDRAILS.maxBidStep * 100)}% in one step.` }
+        : { id: "bid_step", label: "Bid change size", status: "pass", detail: `Every bid stays within ±${Math.round(AD_GUARDRAILS.maxBidStep * 100)}%.` },
+    );
+  }
+
+  const keywords = lines.flatMap((line) => (line.kind !== "bid" && line.after ? [{ ...line.after, kind: line.kind, adGroupId: line.adGroupId }] : []));
+  if (keywords.length > 0) {
+    checks.push(keywordCheck(keywords.map((keyword) => keyword.keyword)));
+    const seen = new Map<string, string>();
+    const conflicts = new Set<string>();
+    for (const keyword of keywords) {
+      const key = `${keyword.adGroupId}|${keyword.keyword.trim().toLowerCase()}`;
+      const previous = seen.get(key);
+      if (previous !== undefined) conflicts.add(previous === keyword.kind ? `"${keyword.keyword.trim()}" is added twice` : `"${keyword.keyword.trim()}" is both added and negated`);
+      seen.set(key, keyword.kind);
+    }
+    checks.push(
+      conflicts.size > 0
+        ? { id: "plan_conflicts", label: "Conflicting keywords", status: "fail", detail: `${[...conflicts].join("; ")} in one ad group.` }
+        : { id: "plan_conflicts", label: "Conflicting keywords", status: "pass" },
+    );
+  }
+  return checks;
 }
 
 export function hasBlockingFailure(checks: ComplianceCheck[]): boolean {

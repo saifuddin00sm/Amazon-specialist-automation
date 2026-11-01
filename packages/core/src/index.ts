@@ -2,6 +2,7 @@ export * from "./advertising";
 export * from "./agent-run";
 export * from "./audit";
 export * from "./autonomy";
+export * from "./campaign-plan";
 export * from "./catalog";
 export * from "./common";
 export * from "./compliance";

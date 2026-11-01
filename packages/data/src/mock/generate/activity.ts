@@ -674,5 +674,7 @@ function runSummary(agent: AgentName, count: number): string {
       return `Found ${count} keyword ${count === 1 ? "opportunity" : "opportunities"}.`;
     case "budget_pacer":
       return `Flagged ${count} budget-limited ${count === 1 ? "campaign" : "campaigns"}.`;
+    case "campaign_optimizer":
+      return `Planned ${count} campaign ${count === 1 ? "change" : "changes"}.`;
   }
 }

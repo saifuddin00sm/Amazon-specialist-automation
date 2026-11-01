@@ -3,6 +3,7 @@ import { AutonomyLevelSchema } from "./autonomy";
 import { ListingVersionSchema } from "./catalog";
 import { AgentNameSchema, EntityRefSchema, IdSchema, IsoDateTimeSchema } from "./common";
 import { ComplianceCheckSchema } from "./compliance";
+import { DiffEntrySchema } from "./proposal";
 import { ReviewReportSchema, RubricScoresSchema } from "./review";
 
 export const AgentRunStatusSchema = z.enum(["queued", "running", "succeeded", "failed", "cancelled"]);
@@ -34,6 +35,8 @@ export const AgentRunStepSchema = z.discriminatedUnion("kind", [
     overall: z.number().int().min(0).max(100),
     findings: ReviewReportSchema.shape.findings,
   }),
+  /** Changes one pass of the campaign optimizer found, as lines of the campaign plan's diff. */
+  z.object({ ...StepBase, kind: z.literal("plan"), agent: AgentNameSchema, changes: z.array(DiffEntrySchema) }),
   /** The run's output is a Proposal waiting for a member. Set once the proposal exists. */
   z.object({ ...StepBase, kind: z.literal("awaiting_approval"), proposalId: IdSchema.optional() }),
 ]);

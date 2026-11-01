@@ -50,7 +50,8 @@ export function approveProposalWrite(
 ): ProposalWriteResult {
   const { proposal, member } = assertDecidable(ctx);
   let diff = proposal.diff;
-  let changed: DiffEntry[] = [];
+  /** The agent's value and the approved one for every path the member changed; a dropped change ends at `before`. */
+  let changes: { path: string; agent: DiffEntry["after"]; final: DiffEntry["after"] }[] = [];
 
   if (edits && edits.length > 0) {
     if (!EDITABLE_PROPOSAL_TYPES.has(proposal.type)) {
@@ -58,7 +59,11 @@ export function approveProposalWrite(
     }
     const result = applyDiffEdits(proposal.diff, edits);
     if ("error" in result) throw new ProposalWriteError("invalid_input", result.error);
-    changed = result.diff.filter((entry, i) => JSON.stringify(entry.after) !== JSON.stringify(proposal.diff[i]?.after));
+    const approved = new Map(result.diff.map((entry) => [entry.path, entry.after]));
+    changes = proposal.diff.flatMap((entry) => {
+      const final = approved.has(entry.path) ? approved.get(entry.path)! : entry.before;
+      return JSON.stringify(final) === JSON.stringify(entry.after) ? [] : [{ path: entry.path, agent: entry.after, final }];
+    });
     diff = result.diff;
   }
 
@@ -72,7 +77,7 @@ export function approveProposalWrite(
   }
 
   const trimmedNote = note?.trim();
-  const edited = changed.length > 0;
+  const edited = changes.length > 0;
   const next = ProposalSchema.parse({
     ...withoutSnooze(proposal),
     status: "approved",
@@ -86,13 +91,7 @@ export function approveProposalWrite(
   const actor = { type: "member" as const, memberId: member.id };
   const events: AuditEventDraft[] = [];
   if (edited) {
-    events.push(event(proposal, ctx.at, actor, "proposal.edited", {
-      changes: changed.map((entry) => ({
-        path: entry.path,
-        agent: proposal.diff.find((original) => original.path === entry.path)?.after ?? null,
-        final: entry.after,
-      })),
-    }));
+    events.push(event(proposal, ctx.at, actor, "proposal.edited", { changes }));
   }
   events.push(event(proposal, ctx.at, actor, "proposal.approved", { note: trimmedNote || null, edited }));
   return { proposal: next, events };
