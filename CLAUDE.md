@@ -27,3 +27,6 @@
 
 Proposal, Review (rubric scores), ListingVersion, ProductFacts, Guardrail,
 AutonomyLevel (L0–L3), AgentRun, AuditEvent
+
+- Write Bash commands with literal paths. Don't use shell variables, $(...) substitution, or more than one `cd` per command.
+- Use the Read/Grep/Glob tools instead of cat/sed/awk/head to read files.
