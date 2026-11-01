@@ -1,5 +1,6 @@
 import { createSupabaseDataSource, getMockDataSource, type DataSource } from "@app/data";
 import { redirect } from "next/navigation";
+import { connection } from "next/server";
 import { cache } from "react";
 import { serverEnv } from "@/lib/env";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -10,6 +11,9 @@ export type SignedInUser = { id: string; email: string };
 const session = cache(async () => {
   const env = serverEnv();
   if (env.DATA_SOURCE !== "supabase") return undefined;
+  // Request time only: checking the token reads the clock, which Next won't allow while prerendering
+  // (Partial Prefetching prerenders with the request's cookies).
+  await connection();
   const supabase = await createSupabaseServerClient(env);
   const { data } = await supabase.auth.getClaims();
   return { supabase, claims: data?.claims };
