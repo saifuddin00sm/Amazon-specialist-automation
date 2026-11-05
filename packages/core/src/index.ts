@@ -8,6 +8,7 @@ export * from "./common";
 export * from "./compliance";
 export * from "./freshness";
 export * from "./metrics";
+export * from "./new-campaign";
 export * from "./permissions";
 export * from "./proposal";
 export * from "./review";

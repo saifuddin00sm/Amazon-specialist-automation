@@ -1,6 +1,7 @@
 import {
   DEFAULT_BRANDING,
   parseCampaignPlanLine,
+  parseNewCampaignPlan,
   type Actor,
   type AdMetricsDaily,
   type Branding,
@@ -36,6 +37,7 @@ const CHANGE_NOUNS: Record<ProposalType, [string, string]> = {
   keyword_negate: ["negative keyword", "negative keywords"],
   target_pause: ["paused target", "paused targets"],
   campaign_plan: ["campaign plan", "campaign plans"],
+  new_campaign: ["new campaign plan", "new campaign plans"],
 };
 
 /** Full weeks with metrics, newest first, ending on the newest day the account has. */
@@ -301,6 +303,11 @@ export function changeDetail(proposal: Proposal, currency: Currency): string | u
       ]
         .filter(Boolean)
         .join(", ");
+    }
+    case "new_campaign": {
+      const { campaigns } = parseNewCampaignPlan(proposal.diff);
+      const budget = campaigns.reduce((sum, campaign) => sum + campaign.dailyBudget, 0);
+      return `${campaigns.length} new campaigns at ${money(budget)} a day`;
     }
   }
 }

@@ -173,6 +173,10 @@ export function scopeToMember(source: DataSource, member: Member, accountOf: Acc
       asSelf(input.memberId, notYouRun);
       return source.startCampaignOptimizer(input);
     },
+    async startCampaignStrategist(input) {
+      asSelf(input.memberId, notYouRun);
+      return source.startCampaignStrategist(input);
+    },
     async completeAgentRun(runId) {
       const run = await source.getAgentRun(runId);
       if (!run || !sees(run.sellerAccountId)) throw new AgentRunError("not_found", "That agent run doesn't exist.");

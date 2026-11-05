@@ -45,6 +45,7 @@ export const AgentNameSchema = z.enum([
   "budget_pacer",
   "keyword_harvester",
   "campaign_optimizer",
+  "campaign_strategist",
 ]);
 export type AgentName = z.infer<typeof AgentNameSchema>;
 

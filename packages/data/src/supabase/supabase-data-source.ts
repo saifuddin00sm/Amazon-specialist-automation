@@ -12,6 +12,7 @@ import { AgentRunError, type DataSource, type LiveListingReview } from "../data-
 import { completeListingOptimizerRun, startListingOptimizerRun, type RunStore } from "../agents/agent-runs";
 import { campaignOptimizerWindow } from "../agents/campaign-optimizer";
 import { completeCampaignOptimizerRun, startCampaignOptimizerRun, type CampaignRunStore } from "../agents/campaign-runs";
+import { completeCampaignStrategistRun, startCampaignStrategistRun, type StrategistStore } from "../agents/campaign-strategist";
 import {
   ProposalWriteError,
   approveProposalWrite,
@@ -302,6 +303,27 @@ export function createSupabaseDataSource(
     };
   };
 
+  /** What the campaign strategist reads about one seller account, shaped like the mock's in-memory store. */
+  const strategistStore = async (sellerAccountId: string, memberId?: string): Promise<StrategistStore> => {
+    const [accountRow, products, facts, member, running] = await Promise.all([
+      db.from("seller_accounts").select().eq("id", sellerAccountId).maybeSingle(),
+      selectAll((from, to) => db.from("products").select().eq("seller_account_id", sellerAccountId).order("id").range(from, to)),
+      selectAll((from, to) => db.from("product_facts").select().eq("seller_account_id", sellerAccountId).order("product_id").range(from, to)),
+      memberId ? writingMember(memberId) : undefined,
+      db.from("agent_runs").select().eq("subject_id", sellerAccountId).eq("agent", "campaign_strategist").eq("status", "running"),
+    ]);
+    const account = must(accountRow);
+    return {
+      workspace: account ? await getWorkspace(account.workspace_id) : undefined,
+      members: member ? [member] : [],
+      account: account ? sellerAccountFromRow(account) : undefined,
+      products: products.map(productFromRow),
+      productFacts: facts.map(productFactsFromRow),
+      runningRuns: (must(running) ?? []).map(agentRunFromRow),
+      nextId: { run: () => newId("run"), proposal: () => newId("prop") },
+    };
+  };
+
   const scopeOf = (record: { workspaceId: string; sellerAccountId: string }) => ({
     workspaceId: record.workspaceId,
     sellerAccountId: record.sellerAccountId,
@@ -560,6 +582,13 @@ export function createSupabaseDataSource(
       must({ data: null, error });
       return run;
     },
+    async startCampaignStrategist({ sellerAccountId, memberId, brief }) {
+      const { run, events } = startCampaignStrategistRun(await strategistStore(sellerAccountId, memberId), { sellerAccountId, memberId, brief, at: now() });
+      const { error } = await db.rpc("start_agent_run", { p_run: agentRunToRow(run), p_events: withIds(events) });
+      if (error?.code === UNIQUE_VIOLATION) throw new AgentRunError("conflict", "The strategist is already planning campaigns for this account.");
+      must({ data: null, error });
+      return run;
+    },
     async completeAgentRun(runId) {
       const run = await getAgentRun(runId);
       if (!run) throw new AgentRunError("not_found", "That agent run doesn't exist.");
@@ -585,6 +614,16 @@ export function createSupabaseDataSource(
         if (error?.code === UNIQUE_VIOLATION) {
           throw new AgentRunError("conflict", "A plan for this campaign is already waiting for approval.");
         }
+        if (!must({ data: filed, error })) return filedElsewhere();
+        return { run: result.run, proposal: result.proposal };
+      }
+      if (run.agent === "campaign_strategist") {
+        const result = completeCampaignStrategistRun(await strategistStore(run.sellerAccountId), run, now().toISOString());
+        const { data: filed, error } = await db.rpc("finish_agent_run", {
+          p_run: agentRunToRow(result.run),
+          p_events: withIds(result.events),
+          ...(result.proposal ? { p_proposal: proposalToRow(result.proposal) } : {}),
+        });
         if (!must({ data: filed, error })) return filedElsewhere();
         return { run: result.run, proposal: result.proposal };
       }

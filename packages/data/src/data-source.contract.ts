@@ -1,4 +1,4 @@
-import { AgentRunSchema } from "@app/core";
+import { AgentRunSchema, parseNewCampaignPlan, type CampaignBrief } from "@app/core";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { DataSource } from "./data-source";
 import type { MockDataset } from "./mock/generate";
@@ -662,6 +662,83 @@ export function describeDataSourceContract(
         await expect(source.startCampaignOptimizer({ campaignId: campaign.id, memberId: owner.id })).rejects.toMatchObject({ code: "conflict" });
         await source.completeAgentRun(run.id);
         await expect(source.startCampaignOptimizer({ campaignId: campaign.id, memberId: owner.id })).rejects.toMatchObject({ code: "conflict" });
+      });
+    });
+
+    describe("campaign strategist runs", () => {
+      const subject = () => {
+        const { merchant } = workspaces();
+        const account = merchantAccount();
+        const withKeywords = new Set(dataset().productFacts.filter((facts) => facts.targetKeywords.length > 0).map((facts) => facts.productId));
+        const active = dataset().products.filter((product) => product.sellerAccountId === account.id && product.status === "active");
+        const products = active.filter((product) => withKeywords.has(product.id)).slice(0, 2);
+        const brief: CampaignBrief = { goal: "launch", productIds: products.map((product) => product.id), dailyBudget: 60, targetAcos: 0.4, breakEvenAcos: 0.32 };
+        return { merchant, account, brief, owner: memberOf(merchant.id, "owner"), viewer: memberOf(merchant.id, "viewer") };
+      };
+
+      it("plans the wizard's brief as a running run on the seller account and audits it", async () => {
+        const { source } = await setup();
+        const { merchant, account, brief, owner } = subject();
+        const run = await source.startCampaignStrategist({ sellerAccountId: account.id, memberId: owner.id, brief });
+
+        expect(AgentRunSchema.safeParse(run).success).toBe(true);
+        expect(run).toMatchObject({ agent: "campaign_strategist", status: "running", subject: { type: "seller_account", id: account.id } });
+        const planned = parseNewCampaignPlan(run.steps!.flatMap((step) => (step.kind === "plan" ? step.changes : [])));
+        expect(planned.brief).toEqual(brief);
+        expect(planned.campaigns.map((campaign) => campaign.role)).toContain("performance");
+        expect(await source.getAgentRun(run.id)).toEqual(run);
+        const [event] = await source.listAuditEvents({ workspaceId: merchant.id, limit: 1 });
+        expect(event).toMatchObject({ action: "agent_run.started", entity: { id: run.id }, metadata: { requestedBy: owner.id, goal: "launch" } });
+      });
+
+      it("files a pending new_campaign proposal in the inbox, without creating any campaign", async () => {
+        const { source } = await setup();
+        const { merchant, account, brief, owner } = subject();
+        const campaignsBefore = await source.listCampaigns(account.id);
+        const run = await source.startCampaignStrategist({ sellerAccountId: account.id, memberId: owner.id, brief });
+        const { run: finished, proposal } = await source.completeAgentRun(run.id);
+
+        expect(finished).toMatchObject({ status: "succeeded", proposalIds: [proposal!.id] });
+        expect(finished.steps?.at(-1)).toMatchObject({ kind: "awaiting_approval", proposalId: proposal!.id });
+        expect(proposal).toMatchObject({
+          type: "new_campaign",
+          status: "pending_approval",
+          // Above breakeven on purpose: a launch.
+          risk: "high",
+          target: { type: "seller_account", id: account.id },
+          createdBy: { type: "agent", agent: "campaign_strategist", agentRunId: run.id },
+        });
+        expect(proposal!.diff).toEqual(run.steps!.flatMap((step) => (step.kind === "plan" ? step.changes : [])));
+        const inbox = await source.listProposals({ workspaceId: merchant.id, status: "pending_approval", type: "new_campaign" });
+        expect(inbox.map((candidate) => candidate.id)).toEqual([proposal!.id]);
+        expect(await source.completeAgentRun(run.id)).toEqual({ run: finished, proposal });
+        expect(await source.listCampaigns(account.id)).toEqual(campaignsBefore);
+
+        // New campaign plans aren't edited line by line: approve or reject them whole.
+        await expect(
+          source.approveProposal({ proposalId: proposal!.id, memberId: owner.id, edits: [{ path: "brief", after: null }] }),
+        ).rejects.toMatchObject({ code: "invalid_input" });
+        expect(await source.approveProposal({ proposalId: proposal!.id, memberId: owner.id })).toMatchObject({ status: "approved" });
+      });
+
+      it("refuses viewers, other accounts' or unknown products, a budget too small to split and a second run in flight", async () => {
+        const { source } = await setup();
+        const { account, brief, owner, viewer } = subject();
+        const start = (overrides: Partial<CampaignBrief>, memberId = owner.id) =>
+          source.startCampaignStrategist({ sellerAccountId: account.id, memberId, brief: { ...brief, ...overrides } });
+        const elsewhere = dataset().products.find((product) => product.sellerAccountId !== account.id)!;
+
+        await expect(start({}, viewer.id)).rejects.toMatchObject({ code: "forbidden" });
+        await expect(start({ productIds: [elsewhere.id] })).rejects.toMatchObject({ code: "invalid_input" });
+        await expect(start({ productIds: ["nope"] })).rejects.toMatchObject({ code: "invalid_input" });
+        await expect(start({ dailyBudget: 2 })).rejects.toMatchObject({ code: "invalid_input" });
+        await expect(source.startCampaignStrategist({ sellerAccountId: "nope", memberId: owner.id, brief })).rejects.toMatchObject({ code: "not_found" });
+
+        const run = await start({});
+        await expect(start({})).rejects.toMatchObject({ code: "conflict" });
+        await source.completeAgentRun(run.id);
+        // Several plans can wait at once; only runs are one at a time.
+        await expect(start({ goal: "profit", targetAcos: 0.22 })).resolves.toMatchObject({ status: "running" });
       });
     });
   });

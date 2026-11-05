@@ -13,6 +13,7 @@ export type {
   RejectProposalInput,
   SnoozeProposalInput,
   StartCampaignOptimizerInput,
+  StartCampaignStrategistInput,
   StartListingOptimizerInput,
   ConnectSellerAccountInput,
   InviteMemberInput,

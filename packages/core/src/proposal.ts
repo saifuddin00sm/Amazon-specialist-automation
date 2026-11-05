@@ -12,6 +12,8 @@ export const ProposalTypeSchema = z.enum([
   "target_pause",
   /** Several bid, keyword and negative changes to one campaign, decided together. */
   "campaign_plan",
+  /** Campaigns that don't exist yet, with their ad groups, targets, bids and budgets. */
+  "new_campaign",
 ]);
 export type ProposalType = z.infer<typeof ProposalTypeSchema>;
 

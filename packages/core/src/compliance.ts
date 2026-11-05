@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { isSkippedPlanLine, parseCampaignPlanLine, type CampaignPlanLine } from "./campaign-plan";
 import { LISTING_LIMITS, utf8ByteLength, type ListingVersion, type ProductFacts } from "./catalog";
+import { parseNewCampaignPlan } from "./new-campaign";
 import { DEFAULT_GUARDRAILS, type Guardrails } from "./workspace";
 import type { DiffEntry, ProposalType } from "./proposal";
 
@@ -197,7 +198,87 @@ export function checkProposalCompliance({ type, diff, liveListing, facts, guardr
       return [];
     case "campaign_plan":
       return checkCampaignPlan(diff, guardrails);
+    case "new_campaign":
+      return checkNewCampaignPlan(diff, guardrails);
   }
+}
+
+/** Budgets, bids and keywords of campaigns a plan would create, one check per guardrail. */
+function checkNewCampaignPlan(diff: DiffEntry[], guardrails: Guardrails): ComplianceCheck[] {
+  const { brief, campaigns, unreadable } = parseNewCampaignPlan(diff);
+  const checks: ComplianceCheck[] = [
+    unreadable.length > 0 || !brief
+      ? { id: "plan_lines", label: "Plan changes", status: "fail", detail: brief ? `${unreadable.length} ${unreadable.length === 1 ? "line isn't" : "lines aren't"} a campaign.` : "The plan has no brief." }
+      : campaigns.length === 0
+        ? { id: "plan_lines", label: "Plan changes", status: "fail", detail: "The plan creates no campaigns." }
+        : { id: "plan_lines", label: "Plan changes", status: "pass", detail: `${campaigns.length} new ${campaigns.length === 1 ? "campaign" : "campaigns"}.` },
+  ];
+  if (campaigns.length === 0) return checks;
+
+  const budgets = campaigns.map((campaign) => campaign.dailyBudget);
+  const low = budgets.filter((budget) => budget < AD_GUARDRAILS.minDailyBudget).length;
+  const high = budgets.filter((budget) => budget > guardrails.maxDailyBudget).length;
+  checks.push(
+    low > 0
+      ? { id: "budget_min", label: "Minimum daily budget", status: "fail", detail: `${low} ${low === 1 ? "campaign is" : "campaigns are"} under ${AD_GUARDRAILS.minDailyBudget} a day.` }
+      : { id: "budget_min", label: "Minimum daily budget", status: "pass" },
+    high > 0
+      ? { id: "budget_max", label: "Daily budget cap", status: "fail", detail: `${high} ${high === 1 ? "campaign is" : "campaigns are"} above the ${guardrails.maxDailyBudget} cap.` }
+      : { id: "budget_max", label: "Daily budget cap", status: "pass", detail: `Cap is ${guardrails.maxDailyBudget} per campaign.` },
+  );
+  const total = Math.round(budgets.reduce((sum, budget) => sum + budget, 0) * 100) / 100;
+  if (brief && total > brief.dailyBudget) {
+    checks.push({ id: "budget_total", label: "Total daily budget", status: "fail", detail: `Campaigns add up to ${total}, above the ${brief.dailyBudget} in the brief.` });
+  }
+
+  const adGroups = campaigns.flatMap((campaign) => campaign.adGroups);
+  const bids = adGroups.flatMap((adGroup) => [adGroup.defaultBid, ...adGroup.targets.map((target) => target.bid)]);
+  const outside = bids.filter((bid) => bidRangeCheck(bid, guardrails).status === "fail").length;
+  const range = `${AD_GUARDRAILS.minBid} and ${guardrails.maxBid}`;
+  checks.push(
+    outside > 0
+      ? { id: "bid_range", label: "Bids within guardrails", status: "fail", detail: `${outside} of ${bids.length} bids aren't between ${range}.` }
+      : { id: "bid_range", label: "Bids within guardrails", status: "pass", detail: `${bids.length} bids between ${range}.` },
+  );
+
+  const keywords = adGroups.flatMap((adGroup) => [
+    ...adGroup.targets.flatMap((target) => (target.kind === "keyword" ? [target.keyword] : [])),
+    ...adGroup.negativeKeywords.map((negative) => negative.keyword),
+  ]);
+  if (keywords.length > 0) checks.push(keywordCheck(keywords));
+
+  // Funneling negates a keyword exact where it is bought broad or phrase; the same match both ways is a conflict.
+  const conflicts = new Set<string>();
+  for (const adGroup of adGroups) {
+    const seen = new Set<string>();
+    for (const target of adGroup.targets) {
+      const key = target.kind === "keyword" ? `${target.keyword.trim().toLowerCase()}|${target.matchType}` : target.kind === "product" ? target.asin : target.autoType;
+      if (seen.has(key)) conflicts.add(`${adGroup.name} targets ${key.split("|")[0]} twice`);
+      seen.add(key);
+    }
+    for (const negative of adGroup.negativeKeywords) {
+      if (seen.has(`${negative.keyword.trim().toLowerCase()}|${negative.matchType}`)) conflicts.add(`${adGroup.name} both targets and negates "${negative.keyword}"`);
+    }
+  }
+  checks.push(
+    conflicts.size > 0
+      ? { id: "plan_conflicts", label: "Conflicting targets", status: "fail", detail: `${[...conflicts].join("; ")}.` }
+      : { id: "plan_conflicts", label: "Conflicting targets", status: "pass" },
+  );
+
+  if (brief?.breakEvenAcos !== undefined) {
+    checks.push(
+      brief.targetAcos > brief.breakEvenAcos
+        ? {
+            id: "acos_breakeven",
+            label: "Target ACoS against breakeven",
+            status: "warn",
+            detail: `Targets ${Math.round(brief.targetAcos * 100)}% ACoS, above the ${Math.round(brief.breakEvenAcos * 100)}% breakeven: ad orders lose money.`,
+          }
+        : { id: "acos_breakeven", label: "Target ACoS against breakeven", status: "pass", detail: `Breakeven is ${Math.round(brief.breakEvenAcos * 100)}%.` },
+    );
+  }
+  return checks;
 }
 
 /** One check per guardrail over every line of the plan, so a long plan still reads as a short list. */

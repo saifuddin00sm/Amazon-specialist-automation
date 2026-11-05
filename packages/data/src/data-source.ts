@@ -4,6 +4,7 @@ import type {
   AuditEvent,
   Branding,
   Campaign,
+  CampaignBrief,
   DiffEdit,
   ListingVersion,
   Marketplace,
@@ -80,6 +81,9 @@ export type StartListingOptimizerInput = { productId: string; memberId: string }
 
 export type StartCampaignOptimizerInput = { campaignId: string; memberId: string };
 
+/** The New campaign wizard's brief for one seller account's products. */
+export type StartCampaignStrategistInput = { sellerAccountId: string; memberId: string; brief: CampaignBrief };
+
 /** Report branding for a workspace; null goes back to the default. */
 export type UpdateWorkspaceBrandingInput = { workspaceId: string; memberId: string; branding: Branding | null };
 
@@ -95,7 +99,7 @@ export type RemoveMemberInput = { memberId: string; targetMemberId: string };
 
 export type SetAgentsPausedInput = { workspaceId: string; memberId: string; paused: boolean };
 
-export type AgentRunErrorCode = "not_found" | "forbidden" | "conflict";
+export type AgentRunErrorCode = "not_found" | "forbidden" | "conflict" | "invalid_input";
 
 /** An agent run the data source refused to start or complete. `message` is safe to show. */
 export class AgentRunError extends Error {
@@ -194,9 +198,16 @@ export interface DataSource {
    */
   startCampaignOptimizer(input: StartCampaignOptimizerInput): Promise<AgentRun>;
   /**
+   * Starts the campaign strategist on a brief from the New campaign wizard as `memberId`. Returns the
+   * running AgentRun, whose plan steps hold the campaigns it will propose. Throws AgentRunError for
+   * products outside the account or inactive, a budget too small to split, or a run already in flight.
+   */
+  startCampaignStrategist(input: StartCampaignStrategistInput): Promise<AgentRun>;
+  /**
    * Finishes a running agent run and files its output: for the listing optimizer, a proposed
    * ListingVersion, its Review and a pending Proposal; for the campaign optimizer, a pending
-   * campaign_plan Proposal, unless it found nothing to change. Calling it on a finished run returns it as is.
+   * campaign_plan Proposal, unless it found nothing to change; for the campaign strategist, a pending
+   * new_campaign Proposal. Calling it on a finished run returns it as is.
    */
   completeAgentRun(runId: string): Promise<{ run: AgentRun; proposal?: Proposal }>;
   /** Newest first. */

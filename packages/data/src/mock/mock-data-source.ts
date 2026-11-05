@@ -10,6 +10,7 @@ import {
 import { AgentRunError, type DataSource } from "../data-source";
 import { campaignOptimizerWindow } from "../agents/campaign-optimizer";
 import { completeCampaignOptimizerRun, startCampaignOptimizerRun, type CampaignRunStore } from "../agents/campaign-runs";
+import { completeCampaignStrategistRun, startCampaignStrategistRun, type StrategistStore } from "../agents/campaign-strategist";
 import {
   approveProposalWrite,
   rejectProposalWrite,
@@ -153,6 +154,24 @@ export function createMockDataSource(dataset: MockDataset, { now = () => new Dat
         (proposal) => proposal.target.id === campaignId && proposal.type === "campaign_plan" && proposal.status === "pending_approval",
       ),
       runningRuns: agentRuns.filter((run) => run.subject?.id === campaignId && run.status === "running"),
+      nextId,
+    };
+  };
+
+  /** What a campaign strategist run reads about `sellerAccountId`. */
+  const strategistStore = (sellerAccountId: string): StrategistStore => {
+    const account = byId(sellerAccounts, sellerAccountId);
+    const products = dataset.products.filter((product) => product.sellerAccountId === sellerAccountId);
+    const productIds = new Set(products.map((product) => product.id));
+    return {
+      workspace: account && byId(workspaces, account.workspaceId),
+      members,
+      account,
+      products,
+      productFacts: dataset.productFacts.filter((facts) => productIds.has(facts.productId)),
+      runningRuns: agentRuns.filter(
+        (run) => run.agent === "campaign_strategist" && run.subject?.id === sellerAccountId && run.status === "running",
+      ),
       nextId,
     };
   };
@@ -388,6 +407,12 @@ export function createMockDataSource(dataset: MockDataset, { now = () => new Dat
       appendAudit(events);
       return run;
     },
+    async startCampaignStrategist({ sellerAccountId, memberId, brief }) {
+      const { run, events } = startCampaignStrategistRun(strategistStore(sellerAccountId), { sellerAccountId, memberId, brief, at: now() });
+      agentRuns.unshift(deepFreeze(run));
+      appendAudit(events);
+      return run;
+    },
     async completeAgentRun(runId) {
       const run = byId(agentRuns, runId);
       if (!run) throw new AgentRunError("not_found", "That agent run doesn't exist.");
@@ -401,6 +426,13 @@ export function createMockDataSource(dataset: MockDataset, { now = () => new Dat
       };
       if (run.agent === "campaign_optimizer") {
         const result = completeCampaignOptimizerRun(campaignRunStore(run.subject?.id ?? ""), run, now().toISOString());
+        if (result.proposal) proposals.unshift(deepFreeze(result.proposal));
+        replaceRun(result.run);
+        appendAudit(result.events);
+        return { run: result.run, proposal: result.proposal };
+      }
+      if (run.agent === "campaign_strategist") {
+        const result = completeCampaignStrategistRun(strategistStore(run.sellerAccountId), run, now().toISOString());
         if (result.proposal) proposals.unshift(deepFreeze(result.proposal));
         replaceRun(result.run);
         appendAudit(result.events);

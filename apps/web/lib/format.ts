@@ -63,6 +63,7 @@ export const AGENT_LABELS: Record<AgentName, string> = {
   budget_pacer: "Budget pacer",
   keyword_harvester: "Keyword harvester",
   campaign_optimizer: "Campaign optimizer",
+  campaign_strategist: "Campaign strategist",
 };
 
 export const PROPOSAL_TYPE_LABELS: Record<ProposalType, string> = {
@@ -74,6 +75,7 @@ export const PROPOSAL_TYPE_LABELS: Record<ProposalType, string> = {
   keyword_negate: "Negate keyword",
   target_pause: "Pause target",
   campaign_plan: "Campaign plan",
+  new_campaign: "New campaign",
 };
 
 export const CAMPAIGN_TYPE_LABELS: Record<CampaignType, string> = {
