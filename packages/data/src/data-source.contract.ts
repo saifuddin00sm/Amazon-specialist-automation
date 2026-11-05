@@ -1,4 +1,13 @@
-import { AgentRunSchema, parseNewCampaignPlan, type CampaignBrief } from "@app/core";
+import {
+  AgentRunSchema,
+  ProductTypeSchema,
+  ProductTypeSummarySchema,
+  parseNewCampaignPlan,
+  parseNewListing,
+  type AgentRun,
+  type CampaignBrief,
+  type NewListingBrief,
+} from "@app/core";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { DataSource } from "./data-source";
 import type { MockDataset } from "./mock/generate";
@@ -739,6 +748,135 @@ export function describeDataSourceContract(
         await source.completeAgentRun(run.id);
         // Several plans can wait at once; only runs are one at a time.
         await expect(start({ goal: "profit", targetAcos: 0.22 })).resolves.toMatchObject({ status: "running" });
+      });
+    });
+
+    describe("product types", () => {
+      it("searches product types and serves their attribute schemas", async () => {
+        const found = await reader().searchProductTypes({ marketplace: "US", keywords: "insulated water bottle" });
+        expect(found[0]).toMatchObject({ name: "BOTTLE", displayName: "Water Bottle" });
+        expect(found.every((summary) => ProductTypeSummarySchema.safeParse(summary).success)).toBe(true);
+        const all = await reader().searchProductTypes({ marketplace: "US" });
+        expect(all.length).toBeGreaterThan(10);
+        expect(all.map((summary) => summary.name)).toContain("BOTTLE");
+        expect(await reader().searchProductTypes({ marketplace: "US", keywords: "zeppelin" })).toEqual([]);
+
+        const bottle = await reader().getProductType({ marketplace: "US", productType: "BOTTLE" });
+        expect(ProductTypeSchema.safeParse(bottle).success).toBe(true);
+        const names = (requirement: string) => bottle!.attributes.filter((attribute) => attribute.requirement === requirement).map((attribute) => attribute.name);
+        expect(names("required")).toEqual(expect.arrayContaining(["item_name", "brand", "bullet_point", "main_product_image_locator", "capacity"]));
+        expect(names("recommended")).toEqual(expect.arrayContaining(["product_description", "generic_keyword", "color"]));
+        expect(await reader().getProductType({ marketplace: "US", productType: "NOPE" })).toBeUndefined();
+      });
+    });
+
+    describe("listing creator runs", () => {
+      const subject = () => {
+        const { merchant } = workspaces();
+        const brief: NewListingBrief = {
+          productType: "BOTTLE",
+          facts: {
+            brand: "Trailcraft",
+            productName: "Insulated Water Bottle",
+            materials: ["18/8 Stainless Steel", "Silicone"],
+            dimensions: { lengthCm: 7.5, widthCm: 7.5, heightCm: 26 },
+            certifications: ["BPA free"],
+            photos: ["https://images.example.com/bottle-main.jpg", "https://images.example.com/bottle-side.jpg"],
+          },
+          attributes: { country_of_origin: "Vietnam", capacity: "750 ml", color: "Sage Green" },
+        };
+        return { merchant, account: merchantAccount(), brief, owner: memberOf(merchant.id, "owner"), viewer: memberOf(merchant.id, "viewer") };
+      };
+      const planned = (run: AgentRun) => run.steps!.flatMap((step) => (step.kind === "plan" ? step.changes : []));
+
+      it("drafts the wizard's brief as a running run on the seller account and audits it", async () => {
+        const { source } = await setup();
+        const { merchant, account, brief, owner } = subject();
+        const run = await source.startListingCreator({ sellerAccountId: account.id, memberId: owner.id, brief });
+
+        expect(AgentRunSchema.safeParse(run).success).toBe(true);
+        expect(run).toMatchObject({ agent: "listing_creator", status: "running", sellerAccountId: account.id });
+        // The product doesn't exist yet.
+        expect(run.subject).toBeUndefined();
+        const { brief: filed, attributes } = parseNewListing(planned(run));
+        expect(filed).toEqual(brief);
+        expect(attributes.get("brand")).toEqual({ value: "Trailcraft", source: "facts" });
+        expect(attributes.get("capacity")).toEqual({ value: "750 ml", source: "seller" });
+        expect(attributes.get("item_name")).toMatchObject({ source: "agent", value: expect.stringContaining("Trailcraft Insulated Water Bottle") });
+        expect(attributes.get("bullet_point")?.value).toEqual(expect.arrayContaining([expect.stringContaining("BPA free")]));
+        expect(run.steps!.map((step) => step.kind)).toEqual(["plan", "draft", "plan", "compliance_check", "review", "awaiting_approval"]);
+        expect(await source.getAgentRun(run.id)).toEqual(run);
+        const [event] = await source.listAuditEvents({ workspaceId: merchant.id, limit: 1 });
+        expect(event).toMatchObject({ action: "agent_run.started", entity: { id: run.id }, metadata: { requestedBy: owner.id, productType: "BOTTLE" } });
+      });
+
+      it("files a pending new_listing proposal in the inbox, without adding a product", async () => {
+        const { source } = await setup();
+        const { merchant, account, brief, owner } = subject();
+        const productsBefore = await source.listProducts({ sellerAccountId: account.id });
+        const run = await source.startListingCreator({ sellerAccountId: account.id, memberId: owner.id, brief });
+        const { run: finished, proposal } = await source.completeAgentRun(run.id);
+
+        expect(finished).toMatchObject({ status: "succeeded", proposalIds: [proposal!.id] });
+        expect(finished.steps?.at(-1)).toMatchObject({ kind: "awaiting_approval", proposalId: proposal!.id });
+        expect(proposal).toMatchObject({
+          type: "new_listing",
+          status: "pending_approval",
+          risk: "medium",
+          title: "New listing: Trailcraft Insulated Water Bottle",
+          target: { type: "seller_account", id: account.id },
+          createdBy: { type: "agent", agent: "listing_creator", agentRunId: run.id },
+        });
+        expect(proposal!.scores.rubric).toBe(run.steps!.find((step) => step.kind === "review")!.overall);
+        expect(proposal!.diff).toEqual(planned(run));
+        const inbox = await source.listProposals({ workspaceId: merchant.id, status: "pending_approval", type: "new_listing" });
+        expect(inbox.map((candidate) => candidate.id)).toEqual([proposal!.id]);
+        expect(await source.completeAgentRun(run.id)).toEqual({ run: finished, proposal });
+        expect(await source.listProducts({ sellerAccountId: account.id })).toEqual(productsBefore);
+
+        // New listings aren't edited line by line: approve or reject them whole.
+        await expect(
+          source.approveProposal({ proposalId: proposal!.id, memberId: owner.id, edits: [{ path: "brief", after: null }] }),
+        ).rejects.toMatchObject({ code: "invalid_input" });
+        expect(await source.approveProposal({ proposalId: proposal!.id, memberId: owner.id })).toMatchObject({ status: "approved" });
+      });
+
+      it("refuses viewers, unknown product types and briefs that don't fit the product type", async () => {
+        const { source } = await setup();
+        const { account, brief, owner, viewer } = subject();
+        const start = (overrides: Partial<NewListingBrief>, memberId = owner.id) =>
+          source.startListingCreator({ sellerAccountId: account.id, memberId, brief: { ...brief, ...overrides } });
+
+        await expect(start({}, viewer.id)).rejects.toMatchObject({ code: "forbidden" });
+        await expect(start({ productType: "NOPE" })).rejects.toMatchObject({ code: "invalid_input" });
+        // Capacity is required and only the seller knows it.
+        await expect(start({ attributes: { country_of_origin: "Vietnam" } })).rejects.toMatchObject({ code: "invalid_input" });
+        await expect(start({ attributes: { ...brief.attributes, country_of_origin: "Atlantis" } })).rejects.toMatchObject({ code: "invalid_input" });
+        await expect(start({ attributes: { ...brief.attributes, flavor: "Mint" } })).rejects.toMatchObject({ code: "invalid_input" });
+        await expect(start({ facts: { ...brief.facts, photos: ["http://images.example.com/bottle.jpg"] } })).rejects.toMatchObject({ code: "invalid_input" });
+        await expect(start({ facts: { ...brief.facts, materials: [] } })).rejects.toMatchObject({ code: "invalid_input" });
+        await expect(source.startListingCreator({ sellerAccountId: "nope", memberId: owner.id, brief })).rejects.toMatchObject({ code: "not_found" });
+      });
+
+      it("drafts several listings at once, alongside the campaign strategist on the same account", async () => {
+        const { source } = await setup();
+        const { account, brief, owner } = subject();
+        const first = await source.startListingCreator({ sellerAccountId: account.id, memberId: owner.id, brief });
+        const second = await source.startListingCreator({
+          sellerAccountId: account.id,
+          memberId: owner.id,
+          brief: { ...brief, facts: { ...brief.facts, productName: "Kids Water Bottle" } },
+        });
+        const products = dataset().products.filter((product) => product.sellerAccountId === account.id && product.status === "active");
+        const strategist = await source.startCampaignStrategist({
+          sellerAccountId: account.id,
+          memberId: owner.id,
+          brief: { goal: "grow", productIds: [products[0]!.id], dailyBudget: 40, targetAcos: 0.3 },
+        });
+
+        expect([first.status, second.status, strategist.status]).toEqual(["running", "running", "running"]);
+        const filed = await Promise.all([first, second].map((run) => source.completeAgentRun(run.id)));
+        expect(filed.map(({ proposal }) => proposal?.title)).toEqual(["New listing: Trailcraft Insulated Water Bottle", "New listing: Trailcraft Kids Water Bottle"]);
       });
     });
   });

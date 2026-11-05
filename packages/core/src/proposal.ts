@@ -14,6 +14,8 @@ export const ProposalTypeSchema = z.enum([
   "campaign_plan",
   /** Campaigns that don't exist yet, with their ad groups, targets, bids and budgets. */
   "new_campaign",
+  /** A listing for a product that isn't on Amazon yet, with every attribute its product type takes. */
+  "new_listing",
 ]);
 export type ProposalType = z.infer<typeof ProposalTypeSchema>;
 

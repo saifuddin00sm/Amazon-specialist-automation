@@ -2,6 +2,7 @@ import { z } from "zod";
 import { isSkippedPlanLine, parseCampaignPlanLine, type CampaignPlanLine } from "./campaign-plan";
 import { LISTING_LIMITS, utf8ByteLength, type ListingVersion, type ProductFacts } from "./catalog";
 import { parseNewCampaignPlan } from "./new-campaign";
+import { NEW_LISTING_LIMITS, newListingCopy, parseNewListing } from "./new-listing";
 import { DEFAULT_GUARDRAILS, type Guardrails } from "./workspace";
 import type { DiffEntry, ProposalType } from "./proposal";
 
@@ -200,7 +201,68 @@ export function checkProposalCompliance({ type, diff, liveListing, facts, guardr
       return checkCampaignPlan(diff, guardrails);
     case "new_campaign":
       return checkNewCampaignPlan(diff, guardrails);
+    case "new_listing":
+      return checkNewListing(diff);
   }
+}
+
+/**
+ * Claims a new listing may only make when the seller listed a matching certification. A new product
+ * has no ProductFacts record with prohibited claims yet, so its certifications are the allow list.
+ */
+export const CERTIFIED_CLAIMS = [
+  "BPA free",
+  "FDA approved",
+  "organic",
+  "non-toxic",
+  "hypoallergenic",
+  "dermatologist tested",
+  "cruelty free",
+  "vegan",
+  "UL listed",
+  "CE marked",
+  "FSC certified",
+  "OEKO-TEX",
+] as const;
+
+/** The listing a new_listing proposal would create: readable lines, Amazon's copy limits, backed claims and photos. */
+function checkNewListing(diff: DiffEntry[]): ComplianceCheck[] {
+  const { brief, attributes, unreadable } = parseNewListing(diff);
+  if (!brief || unreadable.length > 0) {
+    const detail = brief ? `${unreadable.length} ${unreadable.length === 1 ? "line isn't" : "lines aren't"} an attribute.` : "The draft has no brief.";
+    return [{ id: "plan_lines", label: "Listing attributes", status: "fail", detail }];
+  }
+  const checks: ComplianceCheck[] = [
+    { id: "plan_lines", label: "Listing attributes", status: "pass", detail: `${attributes.size} ${attributes.size === 1 ? "attribute" : "attributes"}.` },
+  ];
+
+  const copy = newListingCopy(attributes);
+  // Prohibited claims come from a ProductFacts record, which a new product doesn't have yet; the certification check stands in.
+  checks.push(...checkListingCompliance(copy, undefined).filter((check) => check.id !== "prohibited_claims"));
+
+  const text = listingText(copy).map(([, value]) => value).join("\n");
+  const certified = brief.facts.certifications.join("\n");
+  const unbacked = CERTIFIED_CLAIMS.filter((claim) => includesPhrase(text, claim) && !includesPhrase(certified, claim));
+  checks.push(
+    unbacked.length > 0
+      ? {
+          id: "unbacked_claims",
+          label: "Claims backed by certifications",
+          status: "fail",
+          detail: `Says ${unbacked.map((claim) => `"${claim}"`).join(", ")} without a matching certification in the product facts.`,
+        }
+      : { id: "unbacked_claims", label: "Claims backed by certifications", status: "pass" },
+  );
+
+  const photos = brief.facts.photos.length;
+  checks.push(
+    photos === 0
+      ? { id: "photos", label: "Product photos", status: "fail", detail: "A listing needs a main image." }
+      : photos < NEW_LISTING_LIMITS.photosRecommended
+        ? { id: "photos", label: "Product photos", status: "warn", detail: `${photos} of the ${NEW_LISTING_LIMITS.photosRecommended} photos Amazon recommends.` }
+        : { id: "photos", label: "Product photos", status: "pass", detail: `${photos} photos.` },
+  );
+  return checks;
 }
 
 /** Budgets, bids and keywords of campaigns a plan would create, one check per guardrail. */

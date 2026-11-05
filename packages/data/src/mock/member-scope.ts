@@ -112,6 +112,13 @@ export function scopeToMember(source: DataSource, member: Member, accountOf: Acc
     async listLiveListingReviews(sellerAccountId) {
       return sees(sellerAccountId) ? source.listLiveListingReviews(sellerAccountId) : [];
     },
+    // Amazon's product type schemas, the same for every member.
+    async searchProductTypes(query) {
+      return source.searchProductTypes(query);
+    },
+    async getProductType(query) {
+      return source.getProductType(query);
+    },
 
     async listProposals(query) {
       return (await source.listProposals(query)).filter((proposal) => sees(proposal.sellerAccountId));
@@ -176,6 +183,10 @@ export function scopeToMember(source: DataSource, member: Member, accountOf: Acc
     async startCampaignStrategist(input) {
       asSelf(input.memberId, notYouRun);
       return source.startCampaignStrategist(input);
+    },
+    async startListingCreator(input) {
+      asSelf(input.memberId, notYouRun);
+      return source.startListingCreator(input);
     },
     async completeAgentRun(runId) {
       const run = await source.getAgentRun(runId);

@@ -13,6 +13,8 @@ import { completeListingOptimizerRun, startListingOptimizerRun, type RunStore } 
 import { campaignOptimizerWindow } from "../agents/campaign-optimizer";
 import { completeCampaignOptimizerRun, startCampaignOptimizerRun, type CampaignRunStore } from "../agents/campaign-runs";
 import { completeCampaignStrategistRun, startCampaignStrategistRun, type StrategistStore } from "../agents/campaign-strategist";
+import { completeListingCreatorRun, startListingCreatorRun, type ListingCreatorStore } from "../agents/listing-creator";
+import { productTypeDefinition, searchProductTypeCatalog } from "../mock/product-types";
 import {
   ProposalWriteError,
   approveProposalWrite,
@@ -324,6 +326,18 @@ export function createSupabaseDataSource(
     };
   };
 
+  /** What the listing creator reads about one seller account. */
+  const listingCreatorStore = async (sellerAccountId: string, memberId?: string): Promise<ListingCreatorStore> => {
+    const [account, member] = await Promise.all([getSellerAccount(sellerAccountId), memberId ? writingMember(memberId) : undefined]);
+    return {
+      workspace: account ? await getWorkspace(account.workspaceId) : undefined,
+      members: member ? [member] : [],
+      account,
+      productType: productTypeDefinition,
+      nextId: { run: () => newId("run"), proposal: () => newId("prop") },
+    };
+  };
+
   const scopeOf = (record: { workspaceId: string; sellerAccountId: string }) => ({
     workspaceId: record.workspaceId,
     sellerAccountId: record.sellerAccountId,
@@ -478,6 +492,14 @@ export function createSupabaseDataSource(
       }
       return [...newest.values()].sort((a, b) => a.productId.localeCompare(b.productId));
     },
+    // Product type schemas come from Amazon, not the database. Until packages/amazon serves them, this
+    // reads the same catalog as the mock.
+    async searchProductTypes({ keywords }) {
+      return searchProductTypeCatalog(keywords);
+    },
+    async getProductType({ productType }) {
+      return productTypeDefinition(productType);
+    },
 
     async listProposals({ workspaceId, sellerAccountId, status, type, snoozed }) {
       const at = now().toISOString();
@@ -589,6 +611,11 @@ export function createSupabaseDataSource(
       must({ data: null, error });
       return run;
     },
+    async startListingCreator({ sellerAccountId, memberId, brief }) {
+      const { run, events } = startListingCreatorRun(await listingCreatorStore(sellerAccountId, memberId), { sellerAccountId, memberId, brief, at: now() });
+      must(await db.rpc("start_agent_run", { p_run: agentRunToRow(run), p_events: withIds(events) }));
+      return run;
+    },
     async completeAgentRun(runId) {
       const run = await getAgentRun(runId);
       if (!run) throw new AgentRunError("not_found", "That agent run doesn't exist.");
@@ -619,6 +646,16 @@ export function createSupabaseDataSource(
       }
       if (run.agent === "campaign_strategist") {
         const result = completeCampaignStrategistRun(await strategistStore(run.sellerAccountId), run, now().toISOString());
+        const { data: filed, error } = await db.rpc("finish_agent_run", {
+          p_run: agentRunToRow(result.run),
+          p_events: withIds(result.events),
+          ...(result.proposal ? { p_proposal: proposalToRow(result.proposal) } : {}),
+        });
+        if (!must({ data: filed, error })) return filedElsewhere();
+        return { run: result.run, proposal: result.proposal };
+      }
+      if (run.agent === "listing_creator") {
+        const result = completeListingCreatorRun(await listingCreatorStore(run.sellerAccountId), run, now().toISOString());
         const { data: filed, error } = await db.rpc("finish_agent_run", {
           p_run: agentRunToRow(result.run),
           p_events: withIds(result.events),

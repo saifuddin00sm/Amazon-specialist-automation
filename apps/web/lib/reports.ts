@@ -1,7 +1,9 @@
 import {
   DEFAULT_BRANDING,
+  newListingName,
   parseCampaignPlanLine,
   parseNewCampaignPlan,
+  parseNewListing,
   type Actor,
   type AdMetricsDaily,
   type Branding,
@@ -38,6 +40,7 @@ const CHANGE_NOUNS: Record<ProposalType, [string, string]> = {
   target_pause: ["paused target", "paused targets"],
   campaign_plan: ["campaign plan", "campaign plans"],
   new_campaign: ["new campaign plan", "new campaign plans"],
+  new_listing: ["new listing", "new listings"],
 };
 
 /** Full weeks with metrics, newest first, ending on the newest day the account has. */
@@ -308,6 +311,10 @@ export function changeDetail(proposal: Proposal, currency: Currency): string | u
       const { campaigns } = parseNewCampaignPlan(proposal.diff);
       const budget = campaigns.reduce((sum, campaign) => sum + campaign.dailyBudget, 0);
       return `${campaigns.length} new campaigns at ${money(budget)} a day`;
+    }
+    case "new_listing": {
+      const { brief, attributes } = parseNewListing(proposal.diff);
+      return brief ? `${newListingName(brief.facts)}, ${attributes.size} attributes` : undefined;
     }
   }
 }

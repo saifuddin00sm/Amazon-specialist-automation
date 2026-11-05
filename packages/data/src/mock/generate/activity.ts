@@ -678,5 +678,7 @@ function runSummary(agent: AgentName, count: number): string {
       return `Planned ${count} campaign ${count === 1 ? "change" : "changes"}.`;
     case "campaign_strategist":
       return `Planned ${count} new ${count === 1 ? "campaign" : "campaigns"}.`;
+    case "listing_creator":
+      return `Drafted ${count} new ${count === 1 ? "listing" : "listings"}.`;
   }
 }

@@ -12,9 +12,12 @@ import type {
   MemberRole,
   MetricsDaily,
   MetricsEntityType,
+  NewListingBrief,
   Product,
   ProductFacts,
   ProductStatus,
+  ProductType,
+  ProductTypeSummary,
   Proposal,
   ProposalStatus,
   ProposalType,
@@ -83,6 +86,12 @@ export type StartCampaignOptimizerInput = { campaignId: string; memberId: string
 
 /** The New campaign wizard's brief for one seller account's products. */
 export type StartCampaignStrategistInput = { sellerAccountId: string; memberId: string; brief: CampaignBrief };
+
+/** The New listing wizard's brief for a product that isn't on Amazon yet. */
+export type StartListingCreatorInput = { sellerAccountId: string; memberId: string; brief: NewListingBrief };
+
+/** Amazon product types in one marketplace; no keywords lists them all. */
+export type ProductTypeQuery = { marketplace: Marketplace; keywords?: string };
 
 /** Report branding for a workspace; null goes back to the default. */
 export type UpdateWorkspaceBrandingInput = { workspaceId: string; memberId: string; branding: Branding | null };
@@ -154,6 +163,13 @@ export interface DataSource {
   getReview(id: string): Promise<Review | undefined>;
   /** The newest Review of each live listing in the account, by product id. Unreviewed listings are left out. */
   listLiveListingReviews(sellerAccountId: string): Promise<LiveListingReview[]>;
+  /**
+   * Product types matching the keywords, best match first, for the New listing wizard. They come from
+   * Amazon's Product Type Definitions API; Phase 1 serves a mock catalog.
+   */
+  searchProductTypes(query: ProductTypeQuery): Promise<ProductTypeSummary[]>;
+  /** One product type's attribute schema in a marketplace: what a new listing must and should have. */
+  getProductType(query: { marketplace: Marketplace; productType: string }): Promise<ProductType | undefined>;
 
   /** Newest first. */
   listProposals(query: ProposalQuery): Promise<Proposal[]>;
@@ -204,10 +220,17 @@ export interface DataSource {
    */
   startCampaignStrategist(input: StartCampaignStrategistInput): Promise<AgentRun>;
   /**
+   * Starts the listing creator on a brief from the New listing wizard as `memberId`. Returns the
+   * running AgentRun, whose plan steps hold every attribute it will propose. Throws AgentRunError for
+   * an unknown product type or a brief missing a required attribute. Several can run at once.
+   */
+  startListingCreator(input: StartListingCreatorInput): Promise<AgentRun>;
+  /**
    * Finishes a running agent run and files its output: for the listing optimizer, a proposed
    * ListingVersion, its Review and a pending Proposal; for the campaign optimizer, a pending
    * campaign_plan Proposal, unless it found nothing to change; for the campaign strategist, a pending
-   * new_campaign Proposal. Calling it on a finished run returns it as is.
+   * new_campaign Proposal; for the listing creator, a pending new_listing Proposal. Calling it on a
+   * finished run returns it as is.
    */
   completeAgentRun(runId: string): Promise<{ run: AgentRun; proposal?: Proposal }>;
   /** Newest first. */

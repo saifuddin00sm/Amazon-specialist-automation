@@ -11,6 +11,7 @@ import { AgentRunError, type DataSource } from "../data-source";
 import { campaignOptimizerWindow } from "../agents/campaign-optimizer";
 import { completeCampaignOptimizerRun, startCampaignOptimizerRun, type CampaignRunStore } from "../agents/campaign-runs";
 import { completeCampaignStrategistRun, startCampaignStrategistRun, type StrategistStore } from "../agents/campaign-strategist";
+import { completeListingCreatorRun, startListingCreatorRun, type ListingCreatorStore } from "../agents/listing-creator";
 import {
   approveProposalWrite,
   rejectProposalWrite,
@@ -30,6 +31,7 @@ import {
 import { completeListingOptimizerRun, startListingOptimizerRun } from "../agents/agent-runs";
 import { randomSellerId } from "../seller-id";
 import { scopeToMember, type AccountLookups } from "./member-scope";
+import { productTypeDefinition, searchProductTypeCatalog } from "./product-types";
 import { generateMockDataset, type MockDataset } from "./generate";
 
 export type MockDataSourceOptions = {
@@ -176,6 +178,18 @@ export function createMockDataSource(dataset: MockDataset, { now = () => new Dat
     };
   };
 
+  /** What a listing creator run reads about `sellerAccountId`. */
+  const listingCreatorStore = (sellerAccountId: string): ListingCreatorStore => {
+    const account = byId(sellerAccounts, sellerAccountId);
+    return {
+      workspace: account && byId(workspaces, account.workspaceId),
+      members,
+      account,
+      productType: productTypeDefinition,
+      nextId,
+    };
+  };
+
   /** What the agent-run writes read from and append to. */
   const runStore = () => ({
     workspaces,
@@ -306,6 +320,12 @@ export function createMockDataSource(dataset: MockDataset, { now = () => new Dat
         })
         .sort((a, b) => a.productId.localeCompare(b.productId));
     },
+    async searchProductTypes({ keywords }) {
+      return searchProductTypeCatalog(keywords);
+    },
+    async getProductType({ productType }) {
+      return productTypeDefinition(productType);
+    },
 
     async listProposals({ workspaceId, sellerAccountId, status, type, snoozed }) {
       const at = now().toISOString();
@@ -413,6 +433,12 @@ export function createMockDataSource(dataset: MockDataset, { now = () => new Dat
       appendAudit(events);
       return run;
     },
+    async startListingCreator({ sellerAccountId, memberId, brief }) {
+      const { run, events } = startListingCreatorRun(listingCreatorStore(sellerAccountId), { sellerAccountId, memberId, brief, at: now() });
+      agentRuns.unshift(deepFreeze(run));
+      appendAudit(events);
+      return run;
+    },
     async completeAgentRun(runId) {
       const run = byId(agentRuns, runId);
       if (!run) throw new AgentRunError("not_found", "That agent run doesn't exist.");
@@ -433,6 +459,13 @@ export function createMockDataSource(dataset: MockDataset, { now = () => new Dat
       }
       if (run.agent === "campaign_strategist") {
         const result = completeCampaignStrategistRun(strategistStore(run.sellerAccountId), run, now().toISOString());
+        if (result.proposal) proposals.unshift(deepFreeze(result.proposal));
+        replaceRun(result.run);
+        appendAudit(result.events);
+        return { run: result.run, proposal: result.proposal };
+      }
+      if (run.agent === "listing_creator") {
+        const result = completeListingCreatorRun(listingCreatorStore(run.sellerAccountId), run, now().toISOString());
         if (result.proposal) proposals.unshift(deepFreeze(result.proposal));
         replaceRun(result.run);
         appendAudit(result.events);

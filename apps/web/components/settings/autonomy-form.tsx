@@ -22,6 +22,7 @@ const ACTION_TYPES: Record<ProposalType, { label: string; detail: string }> = {
   listing_update: { label: "Listing rewrites", detail: "Listing optimizer" },
   campaign_plan: { label: "Campaign plans", detail: "Campaign optimizer" },
   new_campaign: { label: "New campaigns", detail: "Campaign strategist" },
+  new_listing: { label: "New listings", detail: "Listing creator" },
   bid_change: { label: "Bid changes", detail: "Bid optimizer" },
   budget_change: { label: "Budget changes", detail: "Budget pacer" },
   keyword_add: { label: "New keywords", detail: "Keyword harvester" },

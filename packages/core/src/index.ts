@@ -9,6 +9,7 @@ export * from "./compliance";
 export * from "./freshness";
 export * from "./metrics";
 export * from "./new-campaign";
+export * from "./new-listing";
 export * from "./permissions";
 export * from "./proposal";
 export * from "./review";
