@@ -1,6 +1,8 @@
 import {
+  CAMPAIGN_GOALS,
   checkProposalCompliance,
   guardrailsFor,
+  parseNewCampaignPlan,
   type Guardrails,
   type ComplianceCheck,
   type ListingCopy,
@@ -30,6 +32,8 @@ export type ApprovalItem = {
   facts?: ProductFacts;
   /** Ad group and target names for the ids in a campaign plan's diff. */
   planLabels?: PlanLabels;
+  /** Titles of the products a new campaign plan advertises, by id. */
+  productTitles?: Record<string, string>;
   compliance: ComplianceCheck[];
   snoozed: boolean;
 };
@@ -108,7 +112,7 @@ async function toItem(
 async function loadContext(
   dataSource: DataSource,
   proposal: Proposal,
-): Promise<Pick<ApprovalItem, "subject" | "review" | "liveListing" | "facts" | "planLabels">> {
+): Promise<Pick<ApprovalItem, "subject" | "review" | "liveListing" | "facts" | "planLabels" | "productTitles">> {
   const { target } = proposal;
   const review = proposal.reviewId ? await dataSource.getReview(proposal.reviewId) : undefined;
 
@@ -171,7 +175,20 @@ async function loadContext(
         review,
       };
     }
-    default:
-      return { subject: { label: `${target.type} ${target.id}` }, review };
+    case "seller_account": {
+      if (proposal.type !== "new_campaign") break;
+      const { brief, campaigns } = parseNewCampaignPlan(proposal.diff);
+      const products = (await Promise.all((brief?.productIds ?? []).map((id) => dataSource.getProduct(id)))).flatMap((product) => (product ? [product] : []));
+      const [first] = products;
+      return {
+        subject: {
+          label: products.length === 1 && first ? first.title : `${products.length} products`,
+          detail: `${campaigns.length} new Sponsored Products campaigns${brief ? `, ${CAMPAIGN_GOALS[brief.goal].label.toLowerCase()} goal` : ""}`,
+        },
+        review,
+        productTitles: Object.fromEntries(products.map((product) => [product.id, product.title])),
+      };
+    }
   }
+  return { subject: { label: `${target.type} ${target.id}` }, review };
 }

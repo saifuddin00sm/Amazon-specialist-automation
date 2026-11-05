@@ -1,15 +1,15 @@
 "use client";
 
-import { breakEvenAcos, maxCostPerClick, type Currency } from "@app/core";
+import { breakEvenAcos, estimatedUnitEconomics, maxCostPerClick, type Currency } from "@app/core";
 import { CircleCheck, TriangleAlert } from "lucide-react";
 import { useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { formatMoney, formatPercent } from "@/lib/format";
 
-type Field = "price" | "unitCost" | "fulfillmentFee" | "referralFeePercent";
+export type UnitEconomicsField = "price" | "unitCost" | "fulfillmentFee" | "referralFeePercent";
 
-const FIELDS: { key: Field; label: string; step: string; suffix?: string }[] = [
+export const UNIT_ECONOMICS_FIELDS: { key: UnitEconomicsField; label: string; step: string; suffix?: string }[] = [
   { key: "price", label: "Selling price", step: "0.01" },
   { key: "unitCost", label: "Product cost", step: "0.01" },
   { key: "fulfillmentFee", label: "Fulfillment fee", step: "0.01" },
@@ -38,20 +38,9 @@ export function BreakevenCalculator({
   /** 30-day orders per click; undefined without clicks. */
   conversionRate: number | undefined;
 }) {
-  const price = round2(averagePrice);
-  const [values, setValues] = useState<Record<Field, string>>({
-    price: String(price),
-    unitCost: String(round2(price * 0.3)),
-    fulfillmentFee: String(round2(Math.min(price * 0.15, 8))),
-    referralFeePercent: "15",
-  });
-  const number = (key: Field) => Number.parseFloat(values[key]) || 0;
-  const breakeven = breakEvenAcos({
-    price: number("price"),
-    unitCost: number("unitCost"),
-    fulfillmentFee: number("fulfillmentFee"),
-    referralFeeRate: number("referralFeePercent") / 100,
-  });
+  const [values, setValues] = useState<Record<UnitEconomicsField, string>>(() => unitEconomicsFields(averagePrice));
+  const number = (key: UnitEconomicsField) => Number.parseFloat(values[key]) || 0;
+  const breakeven = fieldsBreakEven(values);
   const money = (amount: number) => formatMoney(amount, currency);
   const maxCpc = breakeven !== undefined && conversionRate !== undefined ? maxCostPerClick(breakeven, number("price"), conversionRate) : undefined;
 
@@ -65,7 +54,7 @@ export function BreakevenCalculator({
       </div>
 
       <div className="grid grid-cols-2 gap-3">
-        {FIELDS.map(({ key, label, step, suffix }) => (
+        {UNIT_ECONOMICS_FIELDS.map(({ key, label, step, suffix }) => (
           <div key={key} className="flex flex-col gap-1.5">
             <Label htmlFor={`breakeven-${key}`} className="text-xs font-normal text-muted-foreground">
               {label}
@@ -140,6 +129,25 @@ function points(fraction: number): string {
   return `${(fraction * 100).toFixed(1)} pts`;
 }
 
-function round2(value: number): number {
-  return Math.round(value * 100) / 100;
+/** The calculator's fields for a price, from the shared rough estimate of fees and product cost. */
+export function unitEconomicsFields(price: number): Record<UnitEconomicsField, string> {
+  const estimate = estimatedUnitEconomics(price);
+  return {
+    price: String(estimate.price),
+    unitCost: String(estimate.unitCost),
+    fulfillmentFee: String(estimate.fulfillmentFee),
+    referralFeePercent: String(estimate.referralFeeRate * 100),
+  };
 }
+
+/** Breakeven ACoS from the calculator's fields; undefined without a price. */
+export function fieldsBreakEven(values: Record<UnitEconomicsField, string>): number | undefined {
+  const number = (key: UnitEconomicsField) => Number.parseFloat(values[key]) || 0;
+  return breakEvenAcos({
+    price: number("price"),
+    unitCost: number("unitCost"),
+    fulfillmentFee: number("fulfillmentFee"),
+    referralFeeRate: number("referralFeePercent") / 100,
+  });
+}
+

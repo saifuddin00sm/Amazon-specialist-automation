@@ -1,6 +1,6 @@
 "use client";
 
-import { hasBlockingFailure, type AgentRun, type AgentRunStep } from "@app/core";
+import { hasBlockingFailure, newCampaignPath, type AgentRun, type AgentRunStep } from "@app/core";
 import { cn } from "cn";
 import { Check, CircleDashed, FastForward, Loader2, RotateCcw } from "lucide-react";
 import Link from "next/link";
@@ -201,13 +201,17 @@ function StepOutcome({ step, run }: { step: AgentRunStep; run: AgentRun }) {
           Filing proposal
         </span>
       ) : null;
-    case "plan":
-      // The first pass only reads; the others report what they found.
-      return step.changes.length > 0 ? (
+    case "plan": {
+      // The first pass only reads; the others report what they found. The strategist's brief isn't a change.
+      const strategist = step.agent === "campaign_strategist";
+      const count = strategist ? step.changes.filter((change) => change.path !== newCampaignPath.brief).length : step.changes.length;
+      const noun = strategist ? "campaign" : "change";
+      return count > 0 ? (
         <Badge variant="outline" className="tabular-nums">
-          {step.changes.length} {step.changes.length === 1 ? "change" : "changes"}
+          {count} {count === 1 ? noun : `${noun}s`}
         </Badge>
       ) : null;
+    }
     case "draft":
       return null;
   }

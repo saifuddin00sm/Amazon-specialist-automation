@@ -5,6 +5,7 @@ import {
   EDITABLE_PROPOSAL_TYPES,
   checkProposalCompliance,
   hasBlockingFailure,
+  parseNewCampaignPlan,
   type DiffEdit,
   type DiffEntry,
 } from "@app/core";
@@ -13,6 +14,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import type { ApprovalItem } from "@/app/(app)/approvals/load-approvals";
 import { AIGeneratedBadge } from "@/components/ai-generated-badge";
+import { NewCampaignTree } from "@/components/campaigns/new-campaign-tree";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -198,7 +200,9 @@ export function ProposalDetail({
 
       <Section
         title={editing ? "Edit proposed changes" : "Proposed changes"}
-        aside={!editing && <span className="text-xs text-muted-foreground">Before · After</span>}
+        aside={
+          !editing && <span className="text-xs text-muted-foreground">{proposal.type === "new_campaign" ? "Created on approval" : "Before · After"}</span>
+        }
       >
         {editing ? (
           plan ? (
@@ -208,6 +212,13 @@ export function ProposalDetail({
           )
         ) : plan ? (
           <CampaignPlanDiff diff={proposal.diff} labels={item.planLabels} currency={account.currency} />
+        ) : proposal.type === "new_campaign" ? (
+          <NewCampaignTree
+            campaigns={parseNewCampaignPlan(proposal.diff).campaigns}
+            currency={account.currency}
+            productTitles={item.productTitles}
+            createdBy={proposal.createdBy}
+          />
         ) : (
           <DiffView diff={proposal.diff} currency={account.currency} />
         )}
