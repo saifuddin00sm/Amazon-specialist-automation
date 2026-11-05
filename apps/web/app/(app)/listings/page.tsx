@@ -1,7 +1,10 @@
+import { Plus } from "lucide-react";
 import type { Metadata } from "next";
+import Link from "next/link";
 import { connection } from "next/server";
 import { Suspense } from "react";
 import { ProductTable, type ProductRow } from "@/components/listings/product-table";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getDataSource } from "@/lib/data";
 import { getNavItem } from "@/lib/navigation";
@@ -13,12 +16,20 @@ export default function ListingsPage() {
 
   return (
     <div className="flex flex-1 flex-col gap-4">
-      <div className="flex flex-col gap-1">
-        <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
-          <Icon className="size-6 text-muted-foreground" />
-          {title}
-        </h1>
-        <p className="text-sm text-muted-foreground">{description}</p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex flex-col gap-1">
+          <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
+            <Icon className="size-6 text-muted-foreground" />
+            {title}
+          </h1>
+          <p className="text-sm text-muted-foreground">{description}</p>
+        </div>
+        <Button asChild>
+          <Link href="/listings/new">
+            <Plus />
+            New listing
+          </Link>
+        </Button>
       </div>
       <Suspense fallback={<Skeleton className="h-96" />}>
         <Products />

@@ -1,6 +1,6 @@
 "use client";
 
-import { hasBlockingFailure, newCampaignPath, type AgentRun, type AgentRunStep } from "@app/core";
+import { hasBlockingFailure, newCampaignPath, newListingPath, type AgentRun, type AgentRunStep } from "@app/core";
 import { cn } from "cn";
 import { Check, CircleDashed, FastForward, Loader2, RotateCcw } from "lucide-react";
 import Link from "next/link";
@@ -202,10 +202,10 @@ function StepOutcome({ step, run }: { step: AgentRunStep; run: AgentRun }) {
         </span>
       ) : null;
     case "plan": {
-      // The first pass only reads; the others report what they found. The strategist's brief isn't a change.
-      const strategist = step.agent === "campaign_strategist";
-      const count = strategist ? step.changes.filter((change) => change.path !== newCampaignPath.brief).length : step.changes.length;
-      const noun = strategist ? "campaign" : "change";
+      // The first pass only reads; the others report what they found. A strategist's or creator's brief isn't a change.
+      const noun = step.agent === "campaign_strategist" ? "campaign" : step.agent === "listing_creator" ? "attribute" : "change";
+      const brief = step.agent === "campaign_strategist" ? newCampaignPath.brief : step.agent === "listing_creator" ? newListingPath.brief : undefined;
+      const count = step.changes.filter((change) => change.path !== brief).length;
       return count > 0 ? (
         <Badge variant="outline" className="tabular-nums">
           {count} {count === 1 ? noun : `${noun}s`}

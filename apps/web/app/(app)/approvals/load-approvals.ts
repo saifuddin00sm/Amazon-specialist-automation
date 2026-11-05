@@ -2,12 +2,15 @@ import {
   CAMPAIGN_GOALS,
   checkProposalCompliance,
   guardrailsFor,
+  newListingName,
   parseNewCampaignPlan,
+  parseNewListing,
   type Guardrails,
   type ComplianceCheck,
   type ListingCopy,
   type MemberRole,
   type ProductFacts,
+  type ProductType,
   type Proposal,
   type Review,
   type SellerAccount,
@@ -34,6 +37,8 @@ export type ApprovalItem = {
   planLabels?: PlanLabels;
   /** Titles of the products a new campaign plan advertises, by id. */
   productTitles?: Record<string, string>;
+  /** The schema a new listing was drafted for, for its attribute labels. */
+  productType?: ProductType;
   compliance: ComplianceCheck[];
   snoozed: boolean;
 };
@@ -86,7 +91,7 @@ async function toItem(
   const account = accountById.get(proposal.sellerAccountId);
   if (!account) return undefined;
 
-  const context = await loadContext(dataSource, proposal);
+  const context = await loadContext(dataSource, proposal, account);
   return {
     proposal,
     account: {
@@ -112,7 +117,8 @@ async function toItem(
 async function loadContext(
   dataSource: DataSource,
   proposal: Proposal,
-): Promise<Pick<ApprovalItem, "subject" | "review" | "liveListing" | "facts" | "planLabels" | "productTitles">> {
+  account: SellerAccount,
+): Promise<Pick<ApprovalItem, "subject" | "review" | "liveListing" | "facts" | "planLabels" | "productTitles" | "productType">> {
   const { target } = proposal;
   const review = proposal.reviewId ? await dataSource.getReview(proposal.reviewId) : undefined;
 
@@ -176,6 +182,18 @@ async function loadContext(
       };
     }
     case "seller_account": {
+      if (proposal.type === "new_listing") {
+        const { brief, attributes } = parseNewListing(proposal.diff);
+        const productType = brief && (await dataSource.getProductType({ marketplace: account.marketplace, productType: brief.productType }));
+        return {
+          subject: {
+            label: brief ? newListingName(brief.facts) : "New product",
+            detail: `${productType?.displayName ?? brief?.productType ?? "Unknown product type"} · ${attributes.size} attributes, not on Amazon yet`,
+          },
+          review,
+          productType,
+        };
+      }
       if (proposal.type !== "new_campaign") break;
       const { brief, campaigns } = parseNewCampaignPlan(proposal.diff);
       const products = (await Promise.all((brief?.productIds ?? []).map((id) => dataSource.getProduct(id)))).flatMap((product) => (product ? [product] : []));

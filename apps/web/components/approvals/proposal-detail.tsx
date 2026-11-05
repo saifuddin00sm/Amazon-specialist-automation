@@ -15,6 +15,7 @@ import { useMemo, useState } from "react";
 import type { ApprovalItem } from "@/app/(app)/approvals/load-approvals";
 import { AIGeneratedBadge } from "@/components/ai-generated-badge";
 import { NewCampaignTree } from "@/components/campaigns/new-campaign-tree";
+import { NewListingDraft } from "@/components/listings/new-listing-draft";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -201,7 +202,11 @@ export function ProposalDetail({
       <Section
         title={editing ? "Edit proposed changes" : "Proposed changes"}
         aside={
-          !editing && <span className="text-xs text-muted-foreground">{proposal.type === "new_campaign" ? "Created on approval" : "Before · After"}</span>
+          !editing && (
+            <span className="text-xs text-muted-foreground">
+              {proposal.type === "new_campaign" ? "Created on approval" : proposal.type === "new_listing" ? "Listed on approval" : "Before · After"}
+            </span>
+          )
         }
       >
         {editing ? (
@@ -219,6 +224,8 @@ export function ProposalDetail({
             productTitles={item.productTitles}
             createdBy={proposal.createdBy}
           />
+        ) : proposal.type === "new_listing" ? (
+          <NewListingDraft diff={proposal.diff} productType={item.productType} createdBy={proposal.createdBy} />
         ) : (
           <DiffView diff={proposal.diff} currency={account.currency} />
         )}
@@ -234,7 +241,9 @@ export function ProposalDetail({
       ) : (
         <Section title="Review">
           <p className="text-sm text-muted-foreground">
-            Rubric reviews cover listing copy. This proposal is checked by its guardrails above.
+            {proposal.type === "new_listing"
+              ? `The listing reviewer scored the draft ${proposal.scores.rubric ?? "–"}/100 in its run. There's no live listing to compare it with; the guardrails above check it against Amazon's limits.`
+              : "Rubric reviews cover listing copy. This proposal is checked by its guardrails above."}
             {plan && (
               <>
                 {" "}

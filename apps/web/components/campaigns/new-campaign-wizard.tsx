@@ -32,6 +32,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { WizardSteps } from "@/components/wizard-steps";
 import { formatMoney, formatPercent } from "@/lib/format";
 import { UNIT_ECONOMICS_FIELDS, fieldsBreakEven, unitEconomicsFields, type UnitEconomicsField } from "./breakeven-calculator";
 import { NewCampaignTree } from "./new-campaign-tree";
@@ -164,23 +165,7 @@ function AccountWizard({ account }: { account: CatalogAccount }) {
 
   return (
     <div className="flex flex-col gap-5">
-      <ol className="flex flex-wrap items-center gap-2 text-sm" aria-label="Steps">
-        {STEPS.map((label, i) => (
-          <li key={label} className="flex items-center gap-2" aria-current={i === step ? "step" : undefined}>
-            <span
-              className={cn(
-                "flex size-6 items-center justify-center rounded-full border text-xs tabular-nums",
-                i < step && "border-primary bg-primary text-primary-foreground",
-                i === step && "border-primary text-primary",
-              )}
-            >
-              {i + 1}
-            </span>
-            <span className={cn(i === step ? "font-medium" : "text-muted-foreground")}>{label}</span>
-            {i < STEPS.length - 1 && <span aria-hidden className="mx-1 h-px w-6 bg-border" />}
-          </li>
-        ))}
-      </ol>
+      <WizardSteps steps={STEPS} current={step} />
 
       {step === 0 && (
         <section className="flex flex-col gap-3" aria-labelledby="wizard-products">
