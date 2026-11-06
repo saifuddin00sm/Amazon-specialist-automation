@@ -297,8 +297,8 @@ isOneToOne: false
             [_ in never]: never
           }
           Functions: {
-            "commit_proposal_write":
-{ Args: { "p_events": Json,"p_proposal": Json,"p_retire_listing_version_id"?: string }; Returns: boolean
+            "commit_proposal_transition":
+{ Args: { "p_events": Json,"p_from": Database["public"]["Enums"]["proposal_status"][],"p_proposal": Json,"p_retire_listing_version_id"?: string }; Returns: boolean
                            },
 "connect_seller_account":
 { Args: { "p_account": Json,"p_events": Json }; Returns: undefined

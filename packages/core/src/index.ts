@@ -12,5 +12,6 @@ export * from "./new-campaign";
 export * from "./new-listing";
 export * from "./permissions";
 export * from "./proposal";
+export * from "./proposal-transitions";
 export * from "./review";
 export * from "./workspace";

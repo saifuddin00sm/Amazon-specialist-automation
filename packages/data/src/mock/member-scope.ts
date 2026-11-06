@@ -139,6 +139,10 @@ export function scopeToMember(source: DataSource, member: Member, accountOf: Acc
       asSelf(input.memberId, notYouProposal);
       return source.snoozeProposal(input);
     },
+    async publishProposal(input) {
+      asSelf(input.memberId, notYouProposal);
+      return source.publishProposal(input);
+    },
 
     async listCampaigns(sellerAccountId) {
       return sees(sellerAccountId) ? source.listCampaigns(sellerAccountId) : [];

@@ -14,6 +14,7 @@ import { completeCampaignStrategistRun, startCampaignStrategistRun, type Strateg
 import { completeListingCreatorRun, startListingCreatorRun, type ListingCreatorStore } from "../agents/listing-creator";
 import {
   approveProposalWrite,
+  publishProposalWrite,
   rejectProposalWrite,
   snoozeProposalWrite,
   type ProposalWriteContext,
@@ -355,6 +356,9 @@ export function createMockDataSource(dataset: MockDataset, { now = () => new Dat
     },
     async snoozeProposal({ proposalId, memberId, until }) {
       return commit(snoozeProposalWrite(writeContext(proposalId, memberId), { until }));
+    },
+    async publishProposal({ proposalId, memberId }) {
+      return commit(publishProposalWrite(writeContext(proposalId, memberId)));
     },
 
     async listCampaigns(sellerAccountId) {

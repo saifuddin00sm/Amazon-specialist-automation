@@ -143,4 +143,22 @@ describe.skipIf(!env)("row-level security", () => {
       .eq("id", proposal.id);
     expect(forged.error?.code).toBe("42501");
   });
+
+  it("won't let members skip a step or change a decided proposal", async () => {
+    const owner = memberOf(merchant!.id, "owner");
+    const pending = pendingIn(merchantAccount.id);
+    const published = await as.owner
+      .from("proposals")
+      .update({ status: "applied", applied_at: "2026-10-31T09:00:00.000Z", decided_by: { type: "member", memberId: owner.id }, decided_at: "2026-10-31T09:00:00.000Z" })
+      .eq("id", pending.id);
+    expect(published.error?.code).toBe("23514");
+
+    const approved = dataset.proposals.find((proposal) => proposal.sellerAccountId === merchantAccount.id && proposal.status === "approved");
+    if (approved) {
+      const edited = await as.owner.from("proposals").update({ diff: [{ path: "bid", before: 1, after: 9 }] }).eq("id", approved.id);
+      expect(edited.error?.code).toBe("23514");
+      const rejected = await as.owner.from("proposals").update({ status: "rejected", decision_note: "No" }).eq("id", approved.id);
+      expect(rejected.error?.code).toBe("23514");
+    }
+  });
 });

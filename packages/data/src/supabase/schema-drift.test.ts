@@ -20,7 +20,9 @@ import {
   ProposalStatusSchema,
   ProposalTypeSchema,
   WorkspaceKindSchema,
+  allowedStatusChanges,
 } from "@app/core";
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { Constants } from "./database.types";
 
@@ -54,5 +56,12 @@ const ZOD_ENUMS: Record<keyof typeof Constants.public.Enums, readonly string[]> 
 describe("database schema", () => {
   it.each(Object.entries(ZOD_ENUMS))("enum %s matches the Zod schema", (name, values) => {
     expect([...Constants.public.Enums[name as keyof typeof ZOD_ENUMS]]).toEqual([...values]);
+  });
+
+  it("allows the proposal status changes packages/core allows", () => {
+    const migration = readFileSync(new URL("../../../../supabase/migrations/20261101000014_proposal_transitions.sql", import.meta.url), "utf8");
+    const trigger = migration.slice(migration.indexOf("not in ("), migration.indexOf(") then"));
+    const pairs = [...trigger.matchAll(/\('(\w+)', '(\w+)'\)/g)].map(([, from, to]) => [from, to]);
+    expect(pairs).toEqual(allowedStatusChanges());
   });
 });

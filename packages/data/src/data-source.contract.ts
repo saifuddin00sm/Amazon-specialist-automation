@@ -305,8 +305,64 @@ export function describeDataSourceContract(
 
         await source.approveProposal({ proposalId: proposal.id, memberId: owner.id });
         await expect(source.rejectProposal({ proposalId: proposal.id, memberId: owner.id, reason: "Changed my mind" })).rejects.toMatchObject({
-          code: "not_pending",
+          code: "invalid_transition",
+          message: "Only pending proposals can be rejected. This one is already approved.",
         });
+      });
+    });
+
+    describe("publishing", () => {
+      it("refuses to publish a proposal nobody approved, writing nothing", async () => {
+        const { source } = await setup();
+        const { proposal, owner } = pendingOf("bid_change");
+        const before = await latestEvents(source, proposal.workspaceId, 1);
+
+        await expect(source.publishProposal({ proposalId: proposal.id, memberId: owner.id })).rejects.toMatchObject({
+          code: "invalid_transition",
+          message: "Only approved proposals can be published. This one is still pending approval.",
+        });
+        expect(await source.getProposal(proposal.id)).toEqual(proposal);
+        expect(await latestEvents(source, proposal.workspaceId, 1)).toEqual(before);
+
+        await source.rejectProposal({ proposalId: proposal.id, memberId: owner.id, reason: "Too aggressive." });
+        await expect(source.publishProposal({ proposalId: proposal.id, memberId: owner.id })).rejects.toMatchObject({
+          code: "invalid_transition",
+          message: "Only approved proposals can be published. This one was rejected.",
+        });
+      });
+
+      it("publishes an approved proposal once and audits it", async () => {
+        const { source, advanceHours } = await setup();
+        const { proposal, owner } = pendingOf("bid_change");
+        const approved = await source.approveProposal({ proposalId: proposal.id, memberId: owner.id });
+        advanceHours(1);
+
+        const published = await source.publishProposal({ proposalId: proposal.id, memberId: owner.id });
+        expect(published).toEqual({ ...approved, status: "applied", appliedAt: "2026-10-31T10:00:00.000Z" });
+        expect(await source.getProposal(proposal.id)).toEqual(published);
+        const [event] = await latestEvents(source, proposal.workspaceId, 1);
+        expect(event).toMatchObject({
+          action: "proposal.applied",
+          at: "2026-10-31T10:00:00.000Z",
+          actor: { type: "member", memberId: owner.id },
+          entity: { type: "proposal", id: proposal.id },
+          metadata: { type: "bid_change" },
+        });
+
+        await expect(source.publishProposal({ proposalId: proposal.id, memberId: owner.id })).rejects.toMatchObject({
+          code: "invalid_transition",
+          message: "Only approved proposals can be published. This one was already published to Amazon.",
+        });
+      });
+
+      it("refuses viewers and unknown proposals", async () => {
+        const { source } = await setup();
+        const { proposal, owner } = pendingOf("bid_change");
+        await source.approveProposal({ proposalId: proposal.id, memberId: owner.id });
+        const viewer = memberOf(proposal.workspaceId, "viewer");
+        await expect(source.publishProposal({ proposalId: proposal.id, memberId: viewer.id })).rejects.toMatchObject({ code: "forbidden" });
+        await expect(source.publishProposal({ proposalId: "nope", memberId: owner.id })).rejects.toMatchObject({ code: "not_found" });
+        expect((await source.getProposal(proposal.id))?.status).toBe("approved");
       });
     });
 

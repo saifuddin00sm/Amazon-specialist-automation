@@ -59,6 +59,8 @@ export type RejectProposalInput = ProposalWrite & { reason: string };
 
 export type SnoozeProposalInput = ProposalWrite & { until: string };
 
+export type PublishProposalInput = ProposalWrite;
+
 export type MetricsQuery<T extends MetricsEntityType> = {
   sellerAccountId: string;
   entityType: T;
@@ -184,6 +186,11 @@ export interface DataSource {
   rejectProposal(input: RejectProposalInput): Promise<Proposal>;
   /** Hides a pending proposal from the queue until `until`. Writes proposal.snoozed. */
   snoozeProposal(input: SnoozeProposalInput): Promise<Proposal>;
+  /**
+   * Publishes an approved proposal, which becomes applied. Anything not approved is refused with
+   * code invalid_transition. Phase 1 mocks Amazon: nothing is sent. Writes proposal.applied.
+   */
+  publishProposal(input: PublishProposalInput): Promise<Proposal>;
 
   listCampaigns(sellerAccountId: string): Promise<Campaign[]>;
   getCampaign(id: string): Promise<Campaign | undefined>;

@@ -1,6 +1,8 @@
 import {
+  PROPOSAL_TRANSITIONS,
   checkProposalCompliance,
   guardrailsFor,
+  transitionRefusal,
   type AdMetricsDaily,
   type AuditEvent,
   type ListingVersion,
@@ -18,6 +20,7 @@ import { productTypeDefinition, searchProductTypeCatalog } from "../mock/product
 import {
   ProposalWriteError,
   approveProposalWrite,
+  publishProposalWrite,
   rejectProposalWrite,
   snoozeProposalWrite,
   type AuditEventDraft,
@@ -197,18 +200,20 @@ export function createSupabaseDataSource(
     };
   };
 
-  const commit = async ({ proposal, events }: ProposalWriteResult, retireListingVersionId?: string): Promise<Proposal> => {
+  const commit = async ({ proposal, transition, events }: ProposalWriteResult, retireListingVersionId?: string): Promise<Proposal> => {
     const saved = must(
-      await db.rpc("commit_proposal_write", {
+      await db.rpc("commit_proposal_transition", {
         p_proposal: proposalToRow(proposal),
+        p_from: [...PROPOSAL_TRANSITIONS[transition].from],
         p_events: withIds(events),
         ...(retireListingVersionId ? { p_retire_listing_version_id: retireListingVersionId } : {}),
       }),
     );
     if (!saved) {
-      // Someone decided it between our read and this write.
+      // Someone changed its status between our read and this write.
       const latest = await getProposal(proposal.id);
-      throw new ProposalWriteError("not_pending", `This proposal was already ${(latest?.status ?? "decided").replace("_", " ")}.`);
+      if (!latest) throw new ProposalWriteError("not_found", "That proposal no longer exists.");
+      throw new ProposalWriteError("invalid_transition", transitionRefusal(latest.status, transition) ?? "This proposal just changed. Try again.");
     }
     return proposal;
   };
@@ -527,6 +532,9 @@ export function createSupabaseDataSource(
     },
     async snoozeProposal({ proposalId, memberId, until }) {
       return commit(snoozeProposalWrite(await writeContext(proposalId, memberId), { until }));
+    },
+    async publishProposal({ proposalId, memberId }) {
+      return commit(publishProposalWrite(await writeContext(proposalId, memberId)));
     },
 
     async listCampaigns(sellerAccountId) {

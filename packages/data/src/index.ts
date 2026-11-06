@@ -11,6 +11,7 @@ export type {
   ProductQuery,
   ProductTypeQuery,
   ProposalQuery,
+  PublishProposalInput,
   RejectProposalInput,
   SnoozeProposalInput,
   StartCampaignOptimizerInput,
