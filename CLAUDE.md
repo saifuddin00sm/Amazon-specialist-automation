@@ -7,6 +7,9 @@
 - Done: Listings catalog and product page.
 - Done: New listing wizard. Product facts, product type search, review; files
   a new_listing Proposal drafted by the listing creator
+- Done: Proposal state machine (PROPOSAL_TRANSITIONS in packages/core) and
+  audit log; publishing anything not approved is refused
+
 
 
 ## Stack
