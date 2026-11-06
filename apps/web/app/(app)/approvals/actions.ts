@@ -19,6 +19,7 @@ const ApproveInput = z.object({ ids: IdsSchema, note: NoteSchema });
 const ApproveWithEditsInput = z.object({ id: z.string().min(1), edits: z.array(DiffEditSchema).min(1), note: NoteSchema });
 const RejectInput = z.object({ ids: IdsSchema, reason: z.string().trim().min(1, "A reason is required to reject.").max(DECISION_NOTE_MAX_LENGTH) });
 const SnoozeInput = z.object({ ids: IdsSchema, hours: z.literal([24, 72, 168]) });
+const PublishInput = z.object({ ids: IdsSchema });
 
 export async function approveProposals(input: z.input<typeof ApproveInput>): Promise<ActionResult> {
   const parsed = ApproveInput.safeParse(input);
@@ -47,6 +48,13 @@ export async function snoozeProposals(input: z.input<typeof SnoozeInput>): Promi
   const { ids, hours } = parsed.data;
   const until = new Date(Date.now() + hours * 60 * 60 * 1000).toISOString();
   return forEachProposal(ids, async (proposalId, memberId) => (await getDataSource()).snoozeProposal({ proposalId, memberId, until }));
+}
+
+/** Publishes approved proposals. Anything not approved comes back as an error and is left as it was. */
+export async function publishProposals(input: z.input<typeof PublishInput>): Promise<ActionResult> {
+  const parsed = PublishInput.safeParse(input);
+  if (!parsed.success) return invalid(input, parsed.error);
+  return forEachProposal(parsed.data.ids, async (proposalId, memberId) => (await getDataSource()).publishProposal({ proposalId, memberId }));
 }
 
 /**
