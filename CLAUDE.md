@@ -9,7 +9,7 @@
   a new_listing Proposal drafted by the listing creator
 - Done: Proposal state machine (PROPOSAL_TRANSITIONS in packages/core) and
   audit log; publishing anything not approved is refused
-
+- next: Amazon connector, sandbox first.
 
 
 ## Stack
