@@ -13,6 +13,7 @@
     "db:stop": "supabase stop",
     "db:reset": "supabase db reset && pnpm db:seed",
     "db:seed": "pnpm --filter @app/data db:seed",
+    "amazon:connect-seller": "pnpm --filter @app/workflows connect-seller",
     "db:types": "supabase gen types typescript --local --schema public > packages/data/src/supabase/database.types.ts",
     "test:supabase": "pnpm --filter @app/data test:supabase"
   },

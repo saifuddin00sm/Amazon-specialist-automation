@@ -10,6 +10,6 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  // Everything but static assets.
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)"],
+  // Everything but static assets, and Inngest's endpoint: Inngest signs its requests and has no session.
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|api/inngest|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)"],
 };
