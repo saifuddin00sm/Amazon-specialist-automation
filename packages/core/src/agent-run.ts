@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { AutonomyLevelSchema } from "./autonomy";
-import { ListingVersionSchema } from "./catalog";
+import { ListingCopySchema } from "./catalog";
 import { AgentNameSchema, EntityRefSchema, IdSchema, IsoDateTimeSchema } from "./common";
 import { ComplianceCheckSchema } from "./compliance";
 import { DiffEntrySchema } from "./proposal";
@@ -10,8 +10,6 @@ export const AgentRunStatusSchema = z.enum(["queued", "running", "succeeded", "f
 export type AgentRunStatus = z.infer<typeof AgentRunStatusSchema>;
 
 const FINISHED_STATUSES: ReadonlySet<AgentRunStatus> = new Set(["succeeded", "failed", "cancelled"]);
-
-const ListingCopySchema = ListingVersionSchema.pick({ title: true, bullets: true, description: true, backendKeywords: true });
 
 const StepBase = {
   id: IdSchema,

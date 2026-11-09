@@ -17,6 +17,8 @@ export const ProductSchema = z.object({
   price: MoneySchema,
   status: ProductStatusSchema,
   createdAt: IsoDateTimeSchema,
+  /** When the catalog sync last found it on Amazon. Undefined for products it never imported. */
+  syncedAt: IsoDateTimeSchema.optional(),
 });
 export type Product = z.infer<typeof ProductSchema>;
 
@@ -81,3 +83,22 @@ export const ListingVersionSchema = z.object({
   createdAt: IsoDateTimeSchema,
 });
 export type ListingVersion = z.infer<typeof ListingVersionSchema>;
+
+/** A listing's copy (the ListingCopy type): what a ListingVersion holds besides its bookkeeping. */
+export const ListingCopySchema = ListingVersionSchema.pick({ title: true, bullets: true, description: true, backendKeywords: true });
+
+/**
+ * One listing as it is on Amazon, read by the catalog sync. `copy` is left out when Amazon's copy
+ * doesn't fit LISTING_LIMITS (no bullet points yet, say); the product is imported without it.
+ */
+export const ImportedListingSchema = ProductSchema.pick({
+  asin: true,
+  sku: true,
+  title: true,
+  brand: true,
+  category: true,
+  price: true,
+  status: true,
+  createdAt: true,
+}).extend({ copy: ListingCopySchema.optional() });
+export type ImportedListing = z.infer<typeof ImportedListingSchema>;
