@@ -1,3 +1,4 @@
+export * from "./catalog";
 export { createSpApiClient, type SpApiClient } from "./client";
 export {
   LWA_TOKEN_URL,

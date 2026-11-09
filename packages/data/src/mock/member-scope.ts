@@ -1,4 +1,5 @@
 import { canSeeAccount, seesWholeWorkspace, type Member, type SellerAccount } from "@app/core";
+import { CATALOG_SYNC_ONLY, CatalogSyncError } from "../catalog-sync";
 import { AgentRunError, type DataSource } from "../data-source";
 import { ProposalWriteError } from "../proposal-writes";
 import { SettingsWriteError } from "../settings-writes";
@@ -118,6 +119,13 @@ export function scopeToMember(source: DataSource, member: Member, accountOf: Acc
     },
     async getProductType(query) {
       return source.getProductType(query);
+    },
+    // The live catalog changes only through the backend's catalog sync, never as a member.
+    async importCatalogListings() {
+      throw new CatalogSyncError("forbidden", CATALOG_SYNC_ONLY);
+    },
+    async finishCatalogSync() {
+      throw new CatalogSyncError("forbidden", CATALOG_SYNC_ONLY);
     },
 
     async listProposals(query) {

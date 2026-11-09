@@ -13,6 +13,7 @@ import type { PostgrestError, SupabaseClient } from "@supabase/supabase-js";
 import { AgentRunError, type DataSource, type LiveListingReview } from "../data-source";
 import { completeListingOptimizerRun, startListingOptimizerRun, type RunStore } from "../agents/agent-runs";
 import { campaignOptimizerWindow } from "../agents/campaign-optimizer";
+import { CATALOG_SYNC_ONLY, CatalogSyncError, catalogFinishWrite, catalogImportWrite } from "../catalog-sync";
 import { completeCampaignOptimizerRun, startCampaignOptimizerRun, type CampaignRunStore } from "../agents/campaign-runs";
 import { completeCampaignStrategistRun, startCampaignStrategistRun, type StrategistStore } from "../agents/campaign-strategist";
 import { completeListingCreatorRun, startListingCreatorRun, type ListingCreatorStore } from "../agents/listing-creator";
@@ -53,6 +54,7 @@ import {
   metricsDailyFromRow,
   productFactsFromRow,
   productFromRow,
+  productToRow,
   proposalFromRow,
   proposalToRow,
   reviewFromRow,
@@ -343,6 +345,13 @@ export function createSupabaseDataSource(
     };
   };
 
+  /** The live catalog is written only by the catalog sync, with the secret key: never as a member. */
+  const catalogSyncOnly = () => {
+    if (userId !== undefined) throw new CatalogSyncError("forbidden", CATALOG_SYNC_ONLY);
+  };
+  const saveCatalogSync = async (args: Partial<Database["public"]["Functions"]["save_catalog_sync"]["Args"]>) =>
+    must(await db.rpc("save_catalog_sync", { p_products: [], p_superseded_ids: [], p_listing_versions: [], p_events: [], ...args }));
+
   const scopeOf = (record: { workspaceId: string; sellerAccountId: string }) => ({
     workspaceId: record.workspaceId,
     sellerAccountId: record.sellerAccountId,
@@ -395,10 +404,10 @@ export function createSupabaseDataSource(
       );
       return result.account;
     },
-    async connectSellerAccount({ workspaceId, memberId, name, marketplace }) {
+    async connectSellerAccount({ workspaceId, memberId, name, marketplace, sellerId }) {
       const [workspace, member] = await Promise.all([getWorkspace(workspaceId), writingMember(memberId)]);
       const result = connectAccountWrite(
-        { workspace, member, at: now().toISOString(), id: newId("sa"), sellerId: randomSellerId() },
+        { workspace, member, at: now().toISOString(), id: newId("sa"), sellerId: sellerId ?? randomSellerId() },
         { name, marketplace },
       );
       must(await db.rpc("connect_seller_account", { p_account: sellerAccountToRow(result.account) as Json, p_events: withIds(result.events) }));
@@ -504,6 +513,52 @@ export function createSupabaseDataSource(
     },
     async getProductType({ productType }) {
       return productTypeDefinition(productType);
+    },
+    async importCatalogListings({ sellerAccountId, syncedAt, listings }) {
+      catalogSyncOnly();
+      const skus = [...new Set(listings.map((listing) => listing.sku))];
+      const [account, rows] = await Promise.all([
+        getSellerAccount(sellerAccountId),
+        skus.length > 0
+          ? selectAll((from, to) => db.from("products").select().eq("seller_account_id", sellerAccountId).in("sku", skus).order("id").range(from, to))
+          : [],
+      ]);
+      const products = rows.map(productFromRow);
+      const productIds = products.map((product) => product.id);
+      const versions =
+        productIds.length > 0
+          ? await selectAll((from, to) => db.from("listing_versions").select().in("product_id", productIds).order("id").range(from, to))
+          : [];
+      const result = catalogImportWrite(
+        {
+          account,
+          products,
+          versions: versions.map(listingVersionFromRow),
+          syncedAt,
+          nextId: { product: () => newId("prd"), listingVersion: () => newId("lv") },
+        },
+        listings,
+      );
+      const scope = { workspaceId: account!.workspaceId, sellerAccountId };
+      await saveCatalogSync({
+        p_products: result.products.map((product) => productToRow(product, scope.workspaceId)),
+        p_superseded_ids: result.superseded.map((version) => version.id),
+        p_listing_versions: result.versions.map((version) => listingVersionToRow(version, scope)),
+      });
+      return result.counts;
+    },
+    async finishCatalogSync({ sellerAccountId, ...input }) {
+      catalogSyncOnly();
+      const [account, rows] = await Promise.all([
+        getSellerAccount(sellerAccountId),
+        selectAll((from, to) => db.from("products").select().eq("seller_account_id", sellerAccountId).order("id").range(from, to)),
+      ]);
+      const result = catalogFinishWrite({ account, products: rows.map(productFromRow), at: now().toISOString() }, input);
+      await saveCatalogSync({
+        p_products: result.deactivated.map((product) => productToRow(product, account!.workspaceId)),
+        p_events: withIds(result.events),
+      });
+      return { deactivated: result.deactivated.length };
     },
 
     async listProposals({ workspaceId, sellerAccountId, status, type, snoozed }) {

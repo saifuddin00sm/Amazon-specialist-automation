@@ -19,6 +19,7 @@ export const AuditActionSchema = z.enum([
   "member.removed",
   "agents.paused",
   "agents.resumed",
+  "catalog.synced",
 ]);
 export type AuditAction = z.infer<typeof AuditActionSchema>;
 
