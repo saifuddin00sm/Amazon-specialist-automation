@@ -6,6 +6,7 @@ import {
   parseNewListing,
   type AgentRun,
   type CampaignBrief,
+  type ImportedListing,
   type NewListingBrief,
 } from "@app/core";
 import { beforeAll, describe, expect, it } from "vitest";
@@ -823,6 +824,105 @@ export function describeDataSourceContract(
         expect(names("required")).toEqual(expect.arrayContaining(["item_name", "brand", "bullet_point", "main_product_image_locator", "capacity"]));
         expect(names("recommended")).toEqual(expect.arrayContaining(["product_description", "generic_keyword", "color"]));
         expect(await reader().getProductType({ marketplace: "US", productType: "NOPE" })).toBeUndefined();
+      });
+    });
+
+    describe("catalog sync", () => {
+      const listing = (sku: string, overrides: Partial<ImportedListing> = {}): ImportedListing => ({
+        asin: `B0SYNC${sku.slice(-4)}`,
+        sku,
+        title: `Canvas Tote ${sku}`,
+        brand: "Fieldmade",
+        category: "Bags",
+        price: 24.99,
+        status: "active",
+        createdAt: "2026-03-01T12:00:00.000Z",
+        copy: { title: `Canvas Tote ${sku}`, bullets: ["Holds 20 lb", "Machine washable"], description: "A tote for errands.", backendKeywords: "bag shopper" },
+        ...overrides,
+      });
+      const withoutCopy = (sku: string) => listing(sku, { copy: undefined });
+      const noChanges = { created: 0, updated: 0, unchanged: 0, newVersions: 0 };
+      // A fresh account with Amazon's merchant token, as the connect script makes it.
+      const connected = async (source: DataSource) => {
+        const { merchant } = workspaces();
+        const owner = memberOf(merchant.id, "owner");
+        return source.connectSellerAccount({ workspaceId: merchant.id, memberId: owner.id, name: "Test seller", marketplace: "US", sellerId: "A2TESTSELLER01" });
+      };
+
+      it("imports listings as products, each with a live version written by the system", async () => {
+        const { source } = await setup();
+        const account = await connected(source);
+        expect(account.sellerId).toBe("A2TESTSELLER01");
+        const syncedAt = "2026-10-31T03:00:00.000Z";
+
+        const counts = await source.importCatalogListings({ sellerAccountId: account.id, syncedAt, listings: [listing("SYNC-0001"), withoutCopy("SYNC-0002")] });
+        expect(counts).toEqual({ ...noChanges, created: 2, newVersions: 1 });
+
+        const products = await source.listProducts({ sellerAccountId: account.id });
+        expect(products.map((product) => product.sku).sort()).toEqual(["SYNC-0001", "SYNC-0002"]);
+        const tote = products.find((product) => product.sku === "SYNC-0001")!;
+        expect(tote).toMatchObject({ asin: "B0SYNC0001", title: "Canvas Tote SYNC-0001", status: "active", price: 24.99, createdAt: "2026-03-01T12:00:00.000Z", syncedAt });
+        expect(await source.getProduct(tote.id)).toEqual(tote);
+        expect(await source.listListingVersions(tote.id)).toEqual([
+          expect.objectContaining({ version: 1, status: "live", bullets: ["Holds 20 lb", "Machine washable"], createdBy: { type: "system" }, createdAt: syncedAt }),
+        ]);
+        const copyless = products.find((product) => product.sku === "SYNC-0002")!;
+        expect(await source.listListingVersions(copyless.id)).toEqual([]);
+      });
+
+      it("versions changed copy, keeps unchanged listings and deactivates what Amazon no longer lists", async () => {
+        const { source } = await setup();
+        const account = await connected(source);
+        const first = "2026-10-30T03:00:00.000Z";
+        const second = "2026-10-31T03:00:00.000Z";
+        const firstCounts = await source.importCatalogListings({
+          sellerAccountId: account.id,
+          syncedAt: first,
+          listings: [listing("SYNC-0001"), listing("SYNC-0002"), listing("SYNC-0003")],
+        });
+        await source.finishCatalogSync({ sellerAccountId: account.id, syncedAt: first, counts: firstCounts, skipped: {} });
+
+        const reworded = listing("SYNC-0002", { price: 19.99, copy: { ...listing("SYNC-0002").copy!, bullets: ["Holds 25 lb", "Machine washable"] } });
+        const counts = await source.importCatalogListings({ sellerAccountId: account.id, syncedAt: second, listings: [listing("SYNC-0001"), reworded] });
+        expect(counts).toEqual({ ...noChanges, updated: 1, unchanged: 1, newVersions: 1 });
+        expect(await source.finishCatalogSync({ sellerAccountId: account.id, syncedAt: second, counts, skipped: { "No ASIN yet": 1 } })).toEqual({ deactivated: 1 });
+
+        const bySku = new Map((await source.listProducts({ sellerAccountId: account.id })).map((product) => [product.sku, product]));
+        expect(bySku.get("SYNC-0001")).toMatchObject({ status: "active", syncedAt: second });
+        expect(bySku.get("SYNC-0002")).toMatchObject({ status: "active", price: 19.99, syncedAt: second });
+        expect(bySku.get("SYNC-0003")).toMatchObject({ status: "inactive", syncedAt: first });
+        const versions = await source.listListingVersions(bySku.get("SYNC-0002")!.id);
+        expect(versions.map((version) => [version.version, version.status])).toEqual([
+          [2, "live"],
+          [1, "superseded"],
+        ]);
+        expect(versions[0]!.bullets).toEqual(["Holds 25 lb", "Machine washable"]);
+        expect((await source.listListingVersions(bySku.get("SYNC-0001")!.id)).map((version) => version.version)).toEqual([1]);
+
+        const [event] = await latestEvents(source, account.workspaceId, 1);
+        expect(event).toMatchObject({
+          sellerAccountId: account.id,
+          actor: { type: "system" },
+          action: "catalog.synced",
+          entity: { type: "seller_account", id: account.id },
+          metadata: { syncedAt: second, ...counts, deactivated: 1, skipped: { "No ASIN yet": 1 } },
+        });
+      });
+
+      it("refuses unknown accounts and listings the catalog can't hold, writing nothing", async () => {
+        const { source } = await setup();
+        const syncedAt = "2026-10-31T03:00:00.000Z";
+        await expect(source.importCatalogListings({ sellerAccountId: "nope", syncedAt, listings: [listing("SYNC-0001")] })).rejects.toMatchObject({
+          code: "not_found",
+        });
+        await expect(source.finishCatalogSync({ sellerAccountId: "nope", syncedAt, counts: noChanges, skipped: {} })).rejects.toMatchObject({
+          code: "not_found",
+        });
+        const account = await connected(source);
+        await expect(
+          source.importCatalogListings({ sellerAccountId: account.id, syncedAt, listings: [listing("SYNC-0001"), listing("SYNC-0002", { asin: "0316769487" })] }),
+        ).rejects.toMatchObject({ code: "invalid_input" });
+        expect(await source.listProducts({ sellerAccountId: account.id })).toEqual([]);
       });
     });
 

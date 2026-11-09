@@ -45,6 +45,20 @@ isOneToOne: false
       referencedColumns: ["id","workspace_id"]
     }
                   ]
+                },"amazon_authorizations": {
+                  Row: {
+                    "refresh_token_sealed": string,"seller_id": string,"updated_at": string
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "refresh_token_sealed": string,"seller_id": string,"updated_at"?: string
+                  }
+                  Update: {
+                    "refresh_token_sealed"?: string,"seller_id"?: string,"updated_at"?: string
+                  }
+                  Relationships: [
+                    
+                  ]
                 },"audit_events": {
                   Row: {
                     "action": Database["public"]['Enums']["audit_action"],"actor": NonNullable<Json>,"at": string,"entity_id": string,"entity_type": Database["public"]['Enums']["entity_type"],"id": string,"metadata": NonNullable<Json>,"seller_account_id": string | null,"seq": number,"workspace_id": string
@@ -173,14 +187,14 @@ isOneToOne: false
                   ]
                 },"products": {
                   Row: {
-                    "asin": string,"brand": string,"category": string,"created_at": string,"id": string,"price": number,"seller_account_id": string,"sku": string,"status": Database["public"]['Enums']["product_status"],"title": string,"workspace_id": string
+                    "asin": string,"brand": string,"category": string,"created_at": string,"id": string,"price": number,"seller_account_id": string,"sku": string,"status": Database["public"]['Enums']["product_status"],"synced_at": string | null,"title": string,"workspace_id": string
                   }
                   ComputedFields: never
                   Insert: {
-                    "asin": string,"brand": string,"category": string,"created_at": string,"id": string,"price": number,"seller_account_id": string,"sku": string,"status": Database["public"]['Enums']["product_status"],"title": string,"workspace_id": string
+                    "asin": string,"brand": string,"category": string,"created_at": string,"id": string,"price": number,"seller_account_id": string,"sku": string,"status": Database["public"]['Enums']["product_status"],"synced_at"?: string | null,"title": string,"workspace_id": string
                   }
                   Update: {
-                    "asin"?: string,"brand"?: string,"category"?: string,"created_at"?: string,"id"?: string,"price"?: number,"seller_account_id"?: string,"sku"?: string,"status"?: Database["public"]['Enums']["product_status"],"title"?: string,"workspace_id"?: string
+                    "asin"?: string,"brand"?: string,"category"?: string,"created_at"?: string,"id"?: string,"price"?: number,"seller_account_id"?: string,"sku"?: string,"status"?: Database["public"]['Enums']["product_status"],"synced_at"?: string | null,"title"?: string,"workspace_id"?: string
                   }
                   Relationships: [
                     {
@@ -312,6 +326,9 @@ isOneToOne: false
 "remove_member":
 { Args: { "p_events": Json,"p_member_id": string }; Returns: boolean
                            },
+"save_catalog_sync":
+{ Args: { "p_events": Json,"p_listing_versions": Json,"p_products": Json,"p_superseded_ids": (string)[] }; Returns: undefined
+                           },
 "save_member":
 { Args: { "p_events": Json,"p_member": Json }; Returns: undefined
                            },
@@ -329,7 +346,7 @@ isOneToOne: false
                            }
           }
           Enums: {
-            "ad_state": "enabled"|"paused"|"archived","agent_name": "listing_writer"|"listing_reviewer"|"bid_optimizer"|"budget_pacer"|"keyword_harvester"|"campaign_optimizer"|"campaign_strategist"|"listing_creator","agent_run_status": "queued"|"running"|"succeeded"|"failed"|"cancelled","agent_run_trigger": "schedule"|"manual"|"event","audit_action": "agent_run.started"|"agent_run.finished"|"proposal.created"|"proposal.edited"|"proposal.snoozed"|"proposal.approved"|"proposal.rejected"|"proposal.applied"|"proposal.failed"|"listing_version.published"|"member.invited"|"seller_account.connected"|"settings.updated"|"member.updated"|"member.removed"|"agents.paused"|"agents.resumed","auto_target_type": "close_match"|"loose_match"|"substitutes"|"complements","autonomy_level": "L0"|"L1"|"L2"|"L3","bidding_strategy": "fixed"|"dynamic_down_only"|"dynamic_up_and_down","campaign_type": "sponsored_products"|"sponsored_brands"|"sponsored_display","currency": "USD"|"CAD"|"MXN"|"GBP"|"EUR"|"JPY","entity_type": "workspace"|"member"|"seller_account"|"product"|"listing_version"|"review"|"proposal"|"campaign"|"ad_group"|"target"|"agent_run","listing_version_status": "draft"|"proposed"|"live"|"superseded"|"rejected","marketplace": "US"|"CA"|"MX"|"UK"|"DE"|"FR"|"IT"|"ES"|"JP","match_type": "exact"|"phrase"|"broad","member_role": "owner"|"specialist"|"client_approver"|"viewer","metrics_entity_type": "product"|"campaign"|"target","product_status": "active"|"inactive"|"suppressed","proposal_risk": "low"|"medium"|"high","proposal_status": "pending_approval"|"approved"|"rejected"|"applied"|"failed"|"superseded","proposal_type": "listing_update"|"price_change"|"bid_change"|"budget_change"|"keyword_add"|"keyword_negate"|"target_pause"|"campaign_plan"|"new_campaign"|"new_listing","target_kind": "keyword"|"product"|"auto","targeting_type": "auto"|"manual","workspace_kind": "merchant"|"agency"
+            "ad_state": "enabled"|"paused"|"archived","agent_name": "listing_writer"|"listing_reviewer"|"bid_optimizer"|"budget_pacer"|"keyword_harvester"|"campaign_optimizer"|"campaign_strategist"|"listing_creator","agent_run_status": "queued"|"running"|"succeeded"|"failed"|"cancelled","agent_run_trigger": "schedule"|"manual"|"event","audit_action": "agent_run.started"|"agent_run.finished"|"proposal.created"|"proposal.edited"|"proposal.snoozed"|"proposal.approved"|"proposal.rejected"|"proposal.applied"|"proposal.failed"|"listing_version.published"|"member.invited"|"seller_account.connected"|"settings.updated"|"member.updated"|"member.removed"|"agents.paused"|"agents.resumed"|"catalog.synced","auto_target_type": "close_match"|"loose_match"|"substitutes"|"complements","autonomy_level": "L0"|"L1"|"L2"|"L3","bidding_strategy": "fixed"|"dynamic_down_only"|"dynamic_up_and_down","campaign_type": "sponsored_products"|"sponsored_brands"|"sponsored_display","currency": "USD"|"CAD"|"MXN"|"GBP"|"EUR"|"JPY","entity_type": "workspace"|"member"|"seller_account"|"product"|"listing_version"|"review"|"proposal"|"campaign"|"ad_group"|"target"|"agent_run","listing_version_status": "draft"|"proposed"|"live"|"superseded"|"rejected","marketplace": "US"|"CA"|"MX"|"UK"|"DE"|"FR"|"IT"|"ES"|"JP","match_type": "exact"|"phrase"|"broad","member_role": "owner"|"specialist"|"client_approver"|"viewer","metrics_entity_type": "product"|"campaign"|"target","product_status": "active"|"inactive"|"suppressed","proposal_risk": "low"|"medium"|"high","proposal_status": "pending_approval"|"approved"|"rejected"|"applied"|"failed"|"superseded","proposal_type": "listing_update"|"price_change"|"bid_change"|"budget_change"|"keyword_add"|"keyword_negate"|"target_pause"|"campaign_plan"|"new_campaign"|"new_listing","target_kind": "keyword"|"product"|"auto","targeting_type": "auto"|"manual","workspace_kind": "merchant"|"agency"
           }
           CompositeTypes: {
             [_ in never]: never
@@ -445,7 +462,7 @@ export type CompositeTypes<
 export const Constants = {
   "public": {
           Enums: {
-            "ad_state": ["enabled", "paused", "archived"],"agent_name": ["listing_writer", "listing_reviewer", "bid_optimizer", "budget_pacer", "keyword_harvester", "campaign_optimizer", "campaign_strategist", "listing_creator"],"agent_run_status": ["queued", "running", "succeeded", "failed", "cancelled"],"agent_run_trigger": ["schedule", "manual", "event"],"audit_action": ["agent_run.started", "agent_run.finished", "proposal.created", "proposal.edited", "proposal.snoozed", "proposal.approved", "proposal.rejected", "proposal.applied", "proposal.failed", "listing_version.published", "member.invited", "seller_account.connected", "settings.updated", "member.updated", "member.removed", "agents.paused", "agents.resumed"],"auto_target_type": ["close_match", "loose_match", "substitutes", "complements"],"autonomy_level": ["L0", "L1", "L2", "L3"],"bidding_strategy": ["fixed", "dynamic_down_only", "dynamic_up_and_down"],"campaign_type": ["sponsored_products", "sponsored_brands", "sponsored_display"],"currency": ["USD", "CAD", "MXN", "GBP", "EUR", "JPY"],"entity_type": ["workspace", "member", "seller_account", "product", "listing_version", "review", "proposal", "campaign", "ad_group", "target", "agent_run"],"listing_version_status": ["draft", "proposed", "live", "superseded", "rejected"],"marketplace": ["US", "CA", "MX", "UK", "DE", "FR", "IT", "ES", "JP"],"match_type": ["exact", "phrase", "broad"],"member_role": ["owner", "specialist", "client_approver", "viewer"],"metrics_entity_type": ["product", "campaign", "target"],"product_status": ["active", "inactive", "suppressed"],"proposal_risk": ["low", "medium", "high"],"proposal_status": ["pending_approval", "approved", "rejected", "applied", "failed", "superseded"],"proposal_type": ["listing_update", "price_change", "bid_change", "budget_change", "keyword_add", "keyword_negate", "target_pause", "campaign_plan", "new_campaign", "new_listing"],"target_kind": ["keyword", "product", "auto"],"targeting_type": ["auto", "manual"],"workspace_kind": ["merchant", "agency"]
+            "ad_state": ["enabled", "paused", "archived"],"agent_name": ["listing_writer", "listing_reviewer", "bid_optimizer", "budget_pacer", "keyword_harvester", "campaign_optimizer", "campaign_strategist", "listing_creator"],"agent_run_status": ["queued", "running", "succeeded", "failed", "cancelled"],"agent_run_trigger": ["schedule", "manual", "event"],"audit_action": ["agent_run.started", "agent_run.finished", "proposal.created", "proposal.edited", "proposal.snoozed", "proposal.approved", "proposal.rejected", "proposal.applied", "proposal.failed", "listing_version.published", "member.invited", "seller_account.connected", "settings.updated", "member.updated", "member.removed", "agents.paused", "agents.resumed", "catalog.synced"],"auto_target_type": ["close_match", "loose_match", "substitutes", "complements"],"autonomy_level": ["L0", "L1", "L2", "L3"],"bidding_strategy": ["fixed", "dynamic_down_only", "dynamic_up_and_down"],"campaign_type": ["sponsored_products", "sponsored_brands", "sponsored_display"],"currency": ["USD", "CAD", "MXN", "GBP", "EUR", "JPY"],"entity_type": ["workspace", "member", "seller_account", "product", "listing_version", "review", "proposal", "campaign", "ad_group", "target", "agent_run"],"listing_version_status": ["draft", "proposed", "live", "superseded", "rejected"],"marketplace": ["US", "CA", "MX", "UK", "DE", "FR", "IT", "ES", "JP"],"match_type": ["exact", "phrase", "broad"],"member_role": ["owner", "specialist", "client_approver", "viewer"],"metrics_entity_type": ["product", "campaign", "target"],"product_status": ["active", "inactive", "suppressed"],"proposal_risk": ["low", "medium", "high"],"proposal_status": ["pending_approval", "approved", "rejected", "applied", "failed", "superseded"],"proposal_type": ["listing_update", "price_change", "bid_change", "budget_change", "keyword_add", "keyword_negate", "target_pause", "campaign_plan", "new_campaign", "new_listing"],"target_kind": ["keyword", "product", "auto"],"targeting_type": ["auto", "manual"],"workspace_kind": ["merchant", "agency"]
           }
         }
 } as const

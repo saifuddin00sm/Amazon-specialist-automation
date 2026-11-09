@@ -1,5 +1,6 @@
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { describeDataSourceContract } from "../data-source.contract";
+import { createSupabaseAmazonAuthorizationStore } from "./amazon-authorizations";
 import { generateMockDataset } from "../mock/generate";
 import { createSupabaseDataSource, type AppSupabaseClient } from "./supabase-data-source";
 import { adminClient, prepareDatabase, signInAs, testSupabaseEnv as env } from "./test-support";
@@ -136,6 +137,29 @@ describe.skipIf(skip)("supabase DataSource as a signed-in member", () => {
     const { proposal } = await ownerSource.completeAgentRun(run.id);
     expect(proposal).toMatchObject({ status: "approved", decidedBy: { type: "system" } });
     expect(await ownerSource.getProposal(proposal!.id)).toEqual(proposal);
+  });
+
+  it("keeps the catalog sync and Amazon authorizations to the secret key", async () => {
+    const owner = memberOf(merchant!.id, "owner");
+    const account = dataset.sellerAccounts.find((candidate) => candidate.workspaceId === merchant!.id)!;
+    const source = await signedIn(owner.email);
+    await expect(source.importCatalogListings({ sellerAccountId: account.id, syncedAt: now().toISOString(), listings: [] })).rejects.toMatchObject({
+      code: "forbidden",
+    });
+
+    // Past the app's own check, the database refuses too.
+    const { client } = await signInAs(env!, admin, owner.email);
+    const saved = await client.rpc("save_catalog_sync", { p_products: [], p_superseded_ids: [], p_listing_versions: [], p_events: [] });
+    expect(saved.error).not.toBeNull();
+    const store = createSupabaseAmazonAuthorizationStore(admin);
+    await store.set("A2TESTSELLER01", "v1.iv.tag.ciphertext");
+    try {
+      expect(await store.sellerIds()).toContain("A2TESTSELLER01");
+      const { data } = await client.from("amazon_authorizations").select();
+      expect(data ?? []).toEqual([]);
+    } finally {
+      await admin.from("amazon_authorizations").delete().eq("seller_id", "A2TESTSELLER01");
+    }
   });
 
   it("lets a client approver plan a campaign on their own account and approve the plan through row-level security", async () => {

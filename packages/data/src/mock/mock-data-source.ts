@@ -8,6 +8,7 @@ import {
   type Proposal,
 } from "@app/core";
 import { AgentRunError, type DataSource } from "../data-source";
+import { catalogFinishWrite, catalogImportWrite } from "../catalog-sync";
 import { campaignOptimizerWindow } from "../agents/campaign-optimizer";
 import { completeCampaignOptimizerRun, startCampaignOptimizerRun, type CampaignRunStore } from "../agents/campaign-runs";
 import { completeCampaignStrategistRun, startCampaignStrategistRun, type StrategistStore } from "../agents/campaign-strategist";
@@ -49,6 +50,7 @@ export function createMockDataSource(dataset: MockDataset, { now = () => new Dat
   const workspaces = [...dataset.workspaces];
   const members = [...dataset.members];
   const sellerAccounts = [...dataset.sellerAccounts];
+  const products = [...dataset.products];
   const proposals = [...dataset.proposals];
   const listingVersions = [...dataset.listingVersions];
   const auditEvents = [...dataset.auditEvents];
@@ -59,6 +61,7 @@ export function createMockDataSource(dataset: MockDataset, { now = () => new Dat
     run: idSequence("run", agentRuns),
     member: idSequence("mem", members),
     sellerAccount: idSequence("sa", sellerAccounts),
+    product: idSequence("prd", products),
     listingVersion: idSequence("lv", listingVersions),
     review: idSequence("rev", reviews),
     proposal: idSequence("prop", proposals),
@@ -134,8 +137,8 @@ export function createMockDataSource(dataset: MockDataset, { now = () => new Dat
     const targets = dataset.targets.filter((target) => groupIds.has(target.adGroupId));
     const ownTargetIds = new Set(targets.filter((target) => ownGroupIds.has(target.adGroupId)).map((target) => target.id));
     const window = accountId ? campaignOptimizerWindow(metricsDateRange(accountId)) : undefined;
-    const products = dataset.products.filter((product) => product.sellerAccountId === accountId);
-    const productIds = new Set(products.map((product) => product.id));
+    const accountProducts = products.filter((product) => product.sellerAccountId === accountId);
+    const productIds = new Set(accountProducts.map((product) => product.id));
     return {
       workspace: account && byId(workspaces, account.workspaceId),
       members: members,
@@ -144,7 +147,7 @@ export function createMockDataSource(dataset: MockDataset, { now = () => new Dat
       campaigns,
       adGroups,
       targets,
-      products,
+      products: accountProducts,
       productFacts: dataset.productFacts.filter((facts) => productIds.has(facts.productId)),
       window,
       metrics: window
@@ -164,13 +167,13 @@ export function createMockDataSource(dataset: MockDataset, { now = () => new Dat
   /** What a campaign strategist run reads about `sellerAccountId`. */
   const strategistStore = (sellerAccountId: string): StrategistStore => {
     const account = byId(sellerAccounts, sellerAccountId);
-    const products = dataset.products.filter((product) => product.sellerAccountId === sellerAccountId);
-    const productIds = new Set(products.map((product) => product.id));
+    const accountProducts = products.filter((product) => product.sellerAccountId === sellerAccountId);
+    const productIds = new Set(accountProducts.map((product) => product.id));
     return {
       workspace: account && byId(workspaces, account.workspaceId),
       members,
       account,
-      products,
+      products: accountProducts,
       productFacts: dataset.productFacts.filter((facts) => productIds.has(facts.productId)),
       runningRuns: agentRuns.filter(
         (run) => run.agent === "campaign_strategist" && run.subject?.id === sellerAccountId && run.status === "running",
@@ -196,7 +199,7 @@ export function createMockDataSource(dataset: MockDataset, { now = () => new Dat
     workspaces,
     members: members,
     sellerAccounts: sellerAccounts,
-    products: dataset.products,
+    products,
     productFacts: dataset.productFacts,
     listingVersions,
     proposals,
@@ -230,9 +233,15 @@ export function createMockDataSource(dataset: MockDataset, { now = () => new Dat
       appendAudit(result.events);
       return result.account;
     },
-    async connectSellerAccount({ workspaceId, memberId, name, marketplace }) {
+    async connectSellerAccount({ workspaceId, memberId, name, marketplace, sellerId }) {
       const result = connectAccountWrite(
-        { workspace: byId(workspaces, workspaceId), member: byId(members, memberId), at: now().toISOString(), id: nextId.sellerAccount(), sellerId: randomSellerId() },
+        {
+          workspace: byId(workspaces, workspaceId),
+          member: byId(members, memberId),
+          at: now().toISOString(),
+          id: nextId.sellerAccount(),
+          sellerId: sellerId ?? randomSellerId(),
+        },
         { name, marketplace },
       );
       sellerAccounts.push(deepFreeze(result.account));
@@ -285,7 +294,7 @@ export function createMockDataSource(dataset: MockDataset, { now = () => new Dat
     },
 
     async listProducts({ sellerAccountId, category, status }) {
-      return dataset.products.filter(
+      return products.filter(
         (product) =>
           product.sellerAccountId === sellerAccountId &&
           (category === undefined || product.category === category) &&
@@ -293,7 +302,7 @@ export function createMockDataSource(dataset: MockDataset, { now = () => new Dat
       );
     },
     async getProduct(id) {
-      return byId(dataset.products, id);
+      return byId(products, id);
     },
     async getProductFacts(productId) {
       return dataset.productFacts.find((facts) => facts.productId === productId);
@@ -311,7 +320,7 @@ export function createMockDataSource(dataset: MockDataset, { now = () => new Dat
     },
     async listLiveListingReviews(sellerAccountId) {
       const accountProducts = new Set(
-        dataset.products.filter((product) => product.sellerAccountId === sellerAccountId).map((product) => product.id),
+        products.filter((product) => product.sellerAccountId === sellerAccountId).map((product) => product.id),
       );
       return listingVersions
         .filter((version) => version.status === "live" && accountProducts.has(version.productId))
@@ -326,6 +335,41 @@ export function createMockDataSource(dataset: MockDataset, { now = () => new Dat
     },
     async getProductType({ productType }) {
       return productTypeDefinition(productType);
+    },
+    async importCatalogListings({ sellerAccountId, syncedAt, listings }) {
+      const skus = new Set(listings.map((listing) => listing.sku));
+      const existing = products.filter((product) => product.sellerAccountId === sellerAccountId && skus.has(product.sku));
+      const productIds = new Set(existing.map((product) => product.id));
+      const result = catalogImportWrite(
+        {
+          account: byId(sellerAccounts, sellerAccountId),
+          products: existing,
+          versions: listingVersions.filter((version) => productIds.has(version.productId)),
+          syncedAt,
+          nextId,
+        },
+        listings,
+      );
+      for (const product of result.products) {
+        if (productIds.has(product.id)) replace(products, product);
+        else products.push(deepFreeze(product));
+      }
+      for (const version of result.superseded) replace(listingVersions, version);
+      for (const version of result.versions) listingVersions.push(deepFreeze(version));
+      return result.counts;
+    },
+    async finishCatalogSync({ sellerAccountId, ...input }) {
+      const result = catalogFinishWrite(
+        {
+          account: byId(sellerAccounts, sellerAccountId),
+          products: products.filter((product) => product.sellerAccountId === sellerAccountId),
+          at: now().toISOString(),
+        },
+        input,
+      );
+      for (const product of result.deactivated) replace(products, product);
+      appendAudit(result.events);
+      return { deactivated: result.deactivated.length };
     },
 
     async listProposals({ workspaceId, sellerAccountId, status, type, snoozed }) {
@@ -496,7 +540,7 @@ export function createMockDataSource(dataset: MockDataset, { now = () => new Dat
     },
   };
 
-  const accountOfProduct = (id: string) => byId(dataset.products, id)?.sellerAccountId;
+  const accountOfProduct = (id: string) => byId(products, id)?.sellerAccountId;
   const accountOfListingVersion = (id: string) => accountOfProduct(byId(listingVersions, id)?.productId ?? "");
   const accountOfCampaign = (id: string) => byId(dataset.campaigns, id)?.sellerAccountId;
   const accountOfAdGroup = (id: string) => accountOfCampaign(byId(dataset.adGroups, id)?.campaignId ?? "");

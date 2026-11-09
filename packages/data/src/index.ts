@@ -19,6 +19,8 @@ export type {
   StartListingCreatorInput,
   StartListingOptimizerInput,
   ConnectSellerAccountInput,
+  FinishCatalogSyncInput,
+  ImportCatalogListingsInput,
   InviteMemberInput,
   RemoveMemberInput,
   SetAgentsPausedInput,
@@ -26,6 +28,7 @@ export type {
   UpdateSellerAccountSettingsInput,
   UpdateWorkspaceBrandingInput,
 } from "./data-source";
+export { CATALOG_SYNC_ONLY, CatalogSyncError, type CatalogImportCounts, type CatalogSyncErrorCode } from "./catalog-sync";
 export { AGENTS_PAUSED_MESSAGE, SUGGESTIONS_ONLY_TITLE } from "./agents/autonomy";
 export { SettingsWriteError, type AccountSettingsChange, type SettingsWriteErrorCode } from "./settings-writes";
 export { CAMPAIGN_OPTIMIZER_DAYS, adPerformance, campaignOptimizerWindow, type AdPerformance } from "./agents/campaign-optimizer";
@@ -39,6 +42,7 @@ export {
 } from "./mock/generate";
 export { createMockDataSource, getMockDataSource, type MockDataSource, type MockDataSourceOptions } from "./mock/mock-data-source";
 export { ProposalWriteError, type ProposalWriteErrorCode } from "./proposal-writes";
+export { createSupabaseAmazonAuthorizationStore, type AmazonAuthorizationStore } from "./supabase/amazon-authorizations";
 export type { Database } from "./supabase/database.types";
 export {
   SupabaseDataError,

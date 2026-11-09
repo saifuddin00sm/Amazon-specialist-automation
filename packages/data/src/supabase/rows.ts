@@ -147,21 +147,25 @@ export const productToRow = (product: Product, workspaceId: string): TablesInser
   price: product.price,
   status: product.status,
   created_at: product.createdAt,
+  synced_at: product.syncedAt ?? null,
 });
 
 export const productFromRow = (row: Tables<"products">): Product =>
-  ProductSchema.parse({
-    id: row.id,
-    sellerAccountId: row.seller_account_id,
-    asin: row.asin,
-    sku: row.sku,
-    title: row.title,
-    brand: row.brand,
-    category: row.category,
-    price: row.price,
-    status: row.status,
-    createdAt: iso(row.created_at),
-  });
+  ProductSchema.parse(
+    compact({
+      id: row.id,
+      sellerAccountId: row.seller_account_id,
+      asin: row.asin,
+      sku: row.sku,
+      title: row.title,
+      brand: row.brand,
+      category: row.category,
+      price: row.price,
+      status: row.status,
+      createdAt: iso(row.created_at),
+      syncedAt: isoOrUndefined(row.synced_at),
+    }),
+  );
 
 export const productFactsToRow = (facts: ProductFacts, scope: Scope): TablesInsert<"product_facts"> => ({
   ...scopeColumns(scope),

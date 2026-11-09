@@ -30,4 +30,15 @@ describe("mockDataSource", () => {
     expect(await dataSource.getProposal(proposal.id)).toEqual(proposal);
     expect(await createMockDataSource(dataset).getProposal(proposal.id)).toEqual(proposal);
   });
+
+  it("keeps the catalog sync's writes from members", async () => {
+    const owner = dataset.members.find((member) => member.role === "owner")!;
+    const account = dataset.sellerAccounts.find((candidate) => candidate.workspaceId === owner.workspaceId)!;
+    const asOwner = createMockDataSource(dataset).asMember(owner.id)!;
+    const syncedAt = "2026-10-31T03:00:00.000Z";
+    await expect(asOwner.importCatalogListings({ sellerAccountId: account.id, syncedAt, listings: [] })).rejects.toMatchObject({ code: "forbidden" });
+    await expect(
+      asOwner.finishCatalogSync({ sellerAccountId: account.id, syncedAt, counts: { created: 0, updated: 0, unchanged: 0, newVersions: 0 }, skipped: {} }),
+    ).rejects.toMatchObject({ code: "forbidden" });
+  });
 });

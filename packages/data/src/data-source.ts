@@ -6,6 +6,7 @@ import type {
   Campaign,
   CampaignBrief,
   DiffEdit,
+  ImportedListing,
   ListingVersion,
   Marketplace,
   Member,
@@ -26,6 +27,7 @@ import type {
   Target,
   Workspace,
 } from "@app/core";
+import type { CatalogImportCounts } from "./catalog-sync";
 import type { AccountSettingsChange } from "./settings-writes";
 
 /** Inclusive range of calendar days, YYYY-MM-DD. */
@@ -101,7 +103,26 @@ export type UpdateWorkspaceBrandingInput = { workspaceId: string; memberId: stri
 /** Guardrails and autonomy for one account. Fields left out stay as they are. */
 export type UpdateSellerAccountSettingsInput = { sellerAccountId: string; memberId: string } & AccountSettingsChange;
 
-export type ConnectSellerAccountInput = { workspaceId: string; memberId: string; name: string; marketplace: Marketplace };
+export type ConnectSellerAccountInput = {
+  workspaceId: string;
+  memberId: string;
+  name: string;
+  marketplace: Marketplace;
+  /** Amazon's merchant token, for an account Amazon authorized. Left out, Phase 1 makes one up. */
+  sellerId?: string;
+};
+
+/** One page of a catalog sync: listings as Amazon has them now. `syncedAt` names the sync. */
+export type ImportCatalogListingsInput = { sellerAccountId: string; syncedAt: string; listings: ImportedListing[] };
+
+/** Ends a catalog sync that saw every listing, with what it did for the audit log. */
+export type FinishCatalogSyncInput = {
+  sellerAccountId: string;
+  syncedAt: string;
+  counts: CatalogImportCounts;
+  /** Why listings, or their copy, were left out, with how many. */
+  skipped: Record<string, number>;
+};
 
 /** `memberId` makes the change; the team writes act on someone else. */
 export type InviteMemberInput = { workspaceId: string; memberId: string; name: string; email: string; role: MemberRole; sellerAccountIds: string[] };
@@ -140,8 +161,9 @@ export interface DataSource {
   /** Sets an account's guardrails and autonomy as its workspace's owner. Writes settings.updated. */
   updateSellerAccountSettings(input: UpdateSellerAccountSettingsInput): Promise<SellerAccount>;
   /**
-   * Connects a new seller account as the workspace's owner. Phase 1 mocks Amazon's authorization:
-   * nothing is sent to Amazon and the account starts without data. Writes seller_account.connected.
+   * Connects a new seller account as the workspace's owner. Nothing is sent to Amazon: its
+   * authorization is stored apart (packages/workflows), and the account starts without data until the
+   * catalog sync runs. Writes seller_account.connected.
    */
   connectSellerAccount(input: ConnectSellerAccountInput): Promise<SellerAccount>;
   /** Owners manage the team. Each write records member.invited, member.updated or member.removed. */
@@ -172,6 +194,18 @@ export interface DataSource {
   searchProductTypes(query: ProductTypeQuery): Promise<ProductTypeSummary[]>;
   /** One product type's attribute schema in a marketplace: what a new listing must and should have. */
   getProductType(query: { marketplace: Marketplace; productType: string }): Promise<ProductType | undefined>;
+  /**
+   * The catalog sync's import of one page of listings. Backend only (the secret key): members are
+   * refused with CatalogSyncError. Products are matched by SKU: new ones are added and the rest
+   * brought up to date; a listing whose copy changed gets a new live ListingVersion written by the
+   * system, superseding the old one. Changes nothing on Amazon.
+   */
+  importCatalogListings(input: ImportCatalogListingsInput): Promise<CatalogImportCounts>;
+  /**
+   * Ends a catalog sync that saw every listing. Backend only. Products the sync didn't see are no
+   * longer on Amazon and become inactive. Writes catalog.synced.
+   */
+  finishCatalogSync(input: FinishCatalogSyncInput): Promise<{ deactivated: number }>;
 
   /** Newest first. */
   listProposals(query: ProposalQuery): Promise<Proposal[]>;
