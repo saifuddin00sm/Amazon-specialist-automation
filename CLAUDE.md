@@ -10,8 +10,8 @@
 - Done: Proposal state machine (PROPOSAL_TRANSITIONS in packages/core) and
   audit log; publishing anything not approved is refused
 - done: Amazon connector, sandbox first.
-- next: Catalog sync
-
+- done: Catalog sync
+- done: Compliance guard, no LLM.
 
 ## Stack
 - pnpm + Turborepo monorepo; TypeScript strict everywhere
@@ -62,3 +62,4 @@ AutonomyLevel (L0–L3), AgentRun, AuditEvent
 - Never execute `git commit` or `git push` autonomously.
 - Always ask the human user to review changes and execute the final version
   control actions.
+- Never create any branch without asking human user.
