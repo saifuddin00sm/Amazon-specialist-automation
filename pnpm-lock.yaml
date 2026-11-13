@@ -200,6 +200,31 @@ importers:
         specifier: ^9
         version: 9.39.5(jiti@2.7.0)
 
+  packages/rules:
+    dependencies:
+      '@app/core':
+        specifier: workspace:*
+        version: link:../core
+      ajv:
+        specifier: ^8.20.0
+        version: 8.20.0
+      ajv-formats:
+        specifier: ^2.1.1
+        version: 2.1.1(ajv@8.20.0)
+    devDependencies:
+      '@app/eslint-config':
+        specifier: workspace:*
+        version: link:../eslint-config
+      eslint:
+        specifier: ^9
+        version: 9.39.5(jiti@2.7.0)
+      typescript:
+        specifier: ^5
+        version: 5.9.3
+      vitest:
+        specifier: ^5.0.5
+        version: 5.0.5(@opentelemetry/api@1.10.0)(@types/node@24.19.2)(vite@8.3.5(@types/node@24.19.2)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
+
   packages/workflows:
     dependencies:
       '@app/amazon':

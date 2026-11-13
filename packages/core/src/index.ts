@@ -14,4 +14,5 @@ export * from "./permissions";
 export * from "./proposal";
 export * from "./proposal-transitions";
 export * from "./review";
+export * from "./violation";
 export * from "./workspace";
