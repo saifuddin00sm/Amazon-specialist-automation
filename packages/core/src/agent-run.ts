@@ -3,6 +3,7 @@ import { AutonomyLevelSchema } from "./autonomy";
 import { ListingCopySchema } from "./catalog";
 import { AgentNameSchema, EntityRefSchema, IdSchema, IsoDateTimeSchema } from "./common";
 import { ComplianceCheckSchema } from "./compliance";
+import { LlmCallSchema } from "./llm";
 import { DiffEntrySchema } from "./proposal";
 import { ReviewReportSchema, RubricScoresSchema } from "./review";
 
@@ -58,6 +59,8 @@ export const AgentRunSchema = z
     proposalIds: z.array(IdSchema),
     /** Timeline of the run, when the agent recorded one. */
     steps: z.array(AgentRunStepSchema).optional(),
+    /** Every model call the run made, in order, as the LLM gateway logged it. */
+    llmCalls: z.array(LlmCallSchema).optional(),
     startedAt: IsoDateTimeSchema,
     finishedAt: IsoDateTimeSchema.optional(),
     error: z.string().optional(),
@@ -69,5 +72,9 @@ export const AgentRunSchema = z
   .refine((run) => (run.status === "failed") === (run.error !== undefined), {
     message: "error is set exactly when the run failed",
     path: ["error"],
+  })
+  .refine((run) => (run.llmCalls ?? []).every((call) => call.stepId === undefined || run.steps?.some((step) => step.id === call.stepId)), {
+    message: "a model call's step is one of the run's steps",
+    path: ["llmCalls"],
   });
 export type AgentRun = z.infer<typeof AgentRunSchema>;
