@@ -12,6 +12,7 @@
 - done: Amazon connector, sandbox first.
 - done: Catalog sync
 - done: Compliance guard, no LLM.
+- done: LLM gateway (packages/llm). Stand-in agents log scripted calls through it
 
 ## Stack
 - pnpm + Turborepo monorepo; TypeScript strict everywhere
@@ -48,6 +49,18 @@
 - Refresh tokens are encrypted at rest. Never log tokens, secrets or seller data.
 - Write to Amazon (patch or put) only for a Proposal in Approved status.
 - Rate limit with a token bucket per seller + operation; back off on HTTP 429.
+
+## LLM
+- Every model call goes through the gateway in packages/llm (createLlmGateway;
+  agentRunGateway in workflows). Only packages/llm imports a vendor SDK; lint
+  enforces it.
+- Prompts are versioned files: packages/llm/src/prompts/<id>.v<n>.ts. Never
+  edit a published version (prompts.lock.json); add the next version instead.
+- Output is validated with the prompt's Zod schema; routes by task live in
+  routing.ts, prices in pricing.ts (every routed model needs a price).
+- Every call (ok or not) is logged to the agent run's llmCalls with prompt
+  version, model, tokens and cost. Never log prompt or output text.
+- Providers must declare a no-training data policy; the gateway refuses others.
 
 ## Domain words
 Proposal, Review (rubric scores), ListingVersion, ProductFacts, Guardrail,
