@@ -21,9 +21,11 @@ import {
   type Target,
   type Workspace,
 } from "@app/core";
+import { PROMPTS } from "@app/llm";
 import { AgentRunError, type DateRange } from "../data-source";
 import { assertAgentsRunning, fileWithAutonomy, finalStep } from "./autonomy";
 import { adPerformance, countPlanChanges, formatMoney, percent, planCampaignOptimizerRun } from "./campaign-optimizer";
+import { scripted, scriptedLlmCalls } from "./model-calls";
 
 /** What a campaign optimizer run reads about one campaign and its seller account. */
 export type CampaignRunStore = {
@@ -53,6 +55,13 @@ type AuditDraft = Omit<AuditEvent, "id">;
 
 /** Spend-increasing changes (raised bids, new keywords) at which a plan counts as high risk. */
 const HIGH_RISK_INCREASES = 10;
+
+/** The optimizer's model passes, by step title. Reading performance is worked out in code. */
+const OPTIMIZER_FOCUS: Record<string, "bids" | "keywords" | "negatives"> = {
+  "Bid changes": "bids",
+  "New keywords": "keywords",
+  "Negative keywords": "negatives",
+};
 
 /** Plans a campaign optimizer run and returns it running, with the audit event to record. */
 export function startCampaignOptimizerRun(
@@ -86,6 +95,21 @@ export function startCampaignOptimizerRun(
     summary: `Planning bids, keywords and negatives for ${campaign.name}.`,
     proposalIds: [],
     steps: plan.steps,
+    llmCalls: scriptedLlmCalls(plan.steps, (step) => {
+      const focus = OPTIMIZER_FOCUS[step.title];
+      if (step.kind !== "plan" || !focus) return undefined;
+      const performance = adPerformance(store.metrics);
+      return scripted(
+        PROMPTS.campaignOptimize,
+        {
+          focus,
+          campaign: { name: campaign.name, dailyBudget: campaign.dailyBudget, targetAcos: account.targetAcos },
+          guardrails: guardrailsFor(account),
+          performance: { ...performance, acos: performance.acos ?? null, from: store.window!.from, to: store.window!.to },
+        },
+        { changes: step.changes },
+      );
+    }),
     startedAt: at.toISOString(),
   });
 

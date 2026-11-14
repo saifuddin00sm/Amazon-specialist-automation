@@ -8,6 +8,7 @@ import type {
   DiffEdit,
   ImportedListing,
   ListingVersion,
+  LlmCall,
   Marketplace,
   Member,
   MemberRole,
@@ -93,6 +94,8 @@ export type StartCampaignStrategistInput = { sellerAccountId: string; memberId: 
 
 /** The New listing wizard's brief for a product that isn't on Amazon yet. */
 export type StartListingCreatorInput = { sellerAccountId: string; memberId: string; brief: NewListingBrief };
+
+export type RecordLlmCallsInput = { runId: string; calls: LlmCall[] };
 
 /** Amazon product types in one marketplace; no keywords lists them all. */
 export type ProductTypeQuery = { marketplace: Marketplace; keywords?: string };
@@ -274,6 +277,12 @@ export interface DataSource {
    * finished run returns it as is.
    */
   completeAgentRun(runId: string): Promise<{ run: AgentRun; proposal?: Proposal }>;
+  /**
+   * Logs model calls to a running run, after the ones it has, as the LLM gateway makes them. Backend
+   * only (the secret key): members are refused with AgentRunError forbidden. Throws AgentRunError
+   * when the run doesn't exist, has finished, or a call names a step the run doesn't have.
+   */
+  recordLlmCalls(input: RecordLlmCallsInput): Promise<AgentRun>;
   /** Newest first. */
   listAuditEvents(query: ActivityQuery): Promise<AuditEvent[]>;
 }

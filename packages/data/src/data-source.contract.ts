@@ -7,6 +7,7 @@ import {
   type AgentRun,
   type CampaignBrief,
   type ImportedListing,
+  type LlmCall,
   type NewListingBrief,
 } from "@app/core";
 import { beforeAll, describe, expect, it } from "vitest";
@@ -441,6 +442,54 @@ export function describeDataSourceContract(
         await source.completeAgentRun(run.id);
         await expect(source.startListingOptimizer({ productId: product.id, memberId: owner.id })).rejects.toMatchObject({ code: "conflict" });
         await expect(source.completeAgentRun("nope")).rejects.toMatchObject({ code: "not_found" });
+      });
+
+      it("logs a model call for every draft and review round, with its prompt version, model, tokens and cost", async () => {
+        const { source } = await setup();
+        const { product, owner } = subject();
+        const run = await source.startListingOptimizer({ productId: product.id, memberId: owner.id });
+
+        const modelSteps = run.steps!.filter((step) => step.kind === "draft" || step.kind === "review");
+        expect(run.llmCalls?.map((call) => call.stepId)).toEqual(modelSteps.map((step) => step.id));
+        expect(run.llmCalls?.map((call) => `${call.promptId}@v${call.promptVersion}`)).toEqual([
+          "listing_writer.rewrite@v1",
+          "listing_reviewer.review@v1",
+          "listing_writer.rewrite@v1",
+          "listing_reviewer.review@v1",
+        ]);
+        for (const call of run.llmCalls!) {
+          expect(call).toMatchObject({ provider: "scripted", model: "claude-opus-5-5", outcome: "ok" });
+          expect(call.inputTokens).toBeGreaterThan(0);
+          expect(call.outputTokens).toBeGreaterThan(0);
+          expect(call.costUsd).toBeGreaterThan(0);
+        }
+        // Finishing the run keeps its calls.
+        const { run: finished } = await source.completeAgentRun(run.id);
+        expect(finished.llmCalls).toEqual(run.llmCalls);
+        expect((await source.getAgentRun(run.id))?.llmCalls).toEqual(run.llmCalls);
+      });
+
+      it("records further model calls on a running run, and refuses them once it has finished", async () => {
+        const { source } = await setup();
+        const { product, owner } = subject();
+        const run = await source.startListingOptimizer({ productId: product.id, memberId: owner.id });
+        const call: LlmCall = {
+          ...run.llmCalls![0]!,
+          id: `${run.id}_retry`,
+          provider: "anthropic",
+          attempt: 2,
+          outcome: "invalid_output",
+          error: "title: Too big: expected string to have <=200 characters",
+        };
+
+        const updated = await source.recordLlmCalls({ runId: run.id, calls: [call] });
+        expect(updated.llmCalls).toEqual([...run.llmCalls!, call]);
+        expect(await source.getAgentRun(run.id)).toEqual(updated);
+
+        await expect(source.recordLlmCalls({ runId: run.id, calls: [{ ...call, stepId: "not_a_step" }] })).rejects.toMatchObject({ code: "invalid_input" });
+        await expect(source.recordLlmCalls({ runId: "nope", calls: [call] })).rejects.toMatchObject({ code: "not_found" });
+        await source.completeAgentRun(run.id);
+        await expect(source.recordLlmCalls({ runId: run.id, calls: [call] })).rejects.toMatchObject({ code: "conflict" });
       });
     });
 

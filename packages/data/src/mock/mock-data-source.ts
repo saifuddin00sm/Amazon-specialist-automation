@@ -31,6 +31,7 @@ import {
   updateMemberWrite,
 } from "../settings-writes";
 import { completeListingOptimizerRun, startListingOptimizerRun } from "../agents/agent-runs";
+import { withLlmCalls } from "../agents/model-calls";
 import { randomSellerId } from "../seller-id";
 import { scopeToMember, type AccountLookups } from "./member-scope";
 import { productTypeDefinition, searchProductTypeCatalog } from "./product-types";
@@ -485,6 +486,11 @@ export function createMockDataSource(dataset: MockDataset, { now = () => new Dat
       const { run, events } = startListingCreatorRun(listingCreatorStore(sellerAccountId), { sellerAccountId, memberId, brief, at: now() });
       agentRuns.unshift(deepFreeze(run));
       appendAudit(events);
+      return run;
+    },
+    async recordLlmCalls({ runId, calls }) {
+      const run = withLlmCalls(byId(agentRuns, runId), calls);
+      agentRuns[agentRuns.findIndex((candidate) => candidate.id === runId)] = deepFreeze(run);
       return run;
     },
     async completeAgentRun(runId) {

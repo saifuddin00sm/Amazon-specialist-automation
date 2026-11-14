@@ -17,6 +17,7 @@ import { CATALOG_SYNC_ONLY, CatalogSyncError, catalogFinishWrite, catalogImportW
 import { completeCampaignOptimizerRun, startCampaignOptimizerRun, type CampaignRunStore } from "../agents/campaign-runs";
 import { completeCampaignStrategistRun, startCampaignStrategistRun, type StrategistStore } from "../agents/campaign-strategist";
 import { completeListingCreatorRun, startListingCreatorRun, type ListingCreatorStore } from "../agents/listing-creator";
+import { LLM_CALLS_BACKEND_ONLY, withLlmCalls } from "../agents/model-calls";
 import { productTypeDefinition, searchProductTypeCatalog } from "../mock/product-types";
 import {
   ProposalWriteError,
@@ -677,6 +678,14 @@ export function createSupabaseDataSource(
     async startListingCreator({ sellerAccountId, memberId, brief }) {
       const { run, events } = startListingCreatorRun(await listingCreatorStore(sellerAccountId, memberId), { sellerAccountId, memberId, brief, at: now() });
       must(await db.rpc("start_agent_run", { p_run: agentRunToRow(run), p_events: withIds(events) }));
+      return run;
+    },
+    async recordLlmCalls({ runId, calls }) {
+      if (userId !== undefined) throw new AgentRunError("forbidden", LLM_CALLS_BACKEND_ONLY);
+      const run = withLlmCalls(await getAgentRun(runId), calls);
+      const appended = must(await db.rpc("append_agent_run_llm_calls", { p_run_id: runId, p_calls: calls as Json }));
+      // The run finished between the read and the write.
+      if (!appended) throw new AgentRunError("conflict", "That agent run has finished; its model calls are final.");
       return run;
     },
     async completeAgentRun(runId) {

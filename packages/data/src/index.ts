@@ -12,6 +12,7 @@ export type {
   ProductTypeQuery,
   ProposalQuery,
   PublishProposalInput,
+  RecordLlmCallsInput,
   RejectProposalInput,
   SnoozeProposalInput,
   StartCampaignOptimizerInput,

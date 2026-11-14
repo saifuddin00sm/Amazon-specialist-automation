@@ -5,12 +5,15 @@ import {
   ReviewSchema,
   autonomyFor,
   canActOnAccount,
+  checkListingCompliance,
   checkProposalCompliance,
   type Actor,
   type AgentRun,
+  type AgentRunStep,
   type AuditEvent,
   type DiffEntry,
   type ListingVersion,
+  type LlmCall,
   type Member,
   type Product,
   type ProductFacts,
@@ -20,9 +23,11 @@ import {
   type SellerAccount,
   type Workspace,
 } from "@app/core";
+import { PROMPTS } from "@app/llm";
 import { AgentRunError } from "../data-source";
 import { assertAgentsRunning, fileWithAutonomy, finalStep } from "./autonomy";
 import { planListingOptimizerRun } from "./listing-optimizer";
+import { scripted, scriptedLlmCalls } from "./model-calls";
 
 /** The parts of the mock's in-memory store that agent runs read. */
 export type RunStore = {
@@ -71,6 +76,7 @@ export function startListingOptimizerRun(
   }
 
   const id = store.nextId.run();
+  const { steps } = planListingOptimizerRun({ runId: id, product, facts, live, startedAt: at.getTime() });
   const run = AgentRunSchema.parse({
     id,
     workspaceId: account.workspaceId,
@@ -82,7 +88,8 @@ export function startListingOptimizerRun(
     subject: { type: "product", id: productId },
     summary: `Rewriting the listing for ${product.title}.`,
     proposalIds: [],
-    steps: planListingOptimizerRun({ runId: id, product, facts, live, startedAt: at.getTime() }).steps,
+    steps,
+    llmCalls: listingOptimizerCalls(steps, product, facts, live),
     startedAt: at.toISOString(),
   });
 
@@ -212,6 +219,29 @@ export function completeListingOptimizerRun(
   };
   if (filed.outcome === "suggested") return { run: finished, events: [ran] };
   return { run: finished, version, review, proposal: filed.proposal, events: [ran, ...filed.events] };
+}
+
+/** The writer's drafts and the reviewer's rounds, as the gateway calls they stand for. */
+function listingOptimizerCalls(steps: AgentRunStep[], product: Product, facts: ProductFacts, live: ListingVersion): LlmCall[] {
+  const drafts = steps.filter((step) => step.kind === "draft");
+  const reviews = steps.filter((step) => step.kind === "review");
+  return scriptedLlmCalls(steps, (step) => {
+    if (step.kind === "draft") {
+      // Each revision answers the previous round's findings.
+      const findings = reviews.find((review) => review.round === step.round - 1)?.findings ?? [];
+      return scripted(PROMPTS.listingRewrite, { brand: product.brand, productTitle: product.title, facts, live, findings }, step.listing);
+    }
+    if (step.kind === "review") {
+      const draft = drafts.find((candidate) => candidate.round === step.round);
+      if (!draft) return undefined;
+      return scripted(
+        PROMPTS.listingReview,
+        { facts, draft: draft.listing, checks: checkListingCompliance(draft.listing, facts) },
+        { scores: step.scores, summary: `Overall ${step.overall}/100.`, findings: step.findings },
+      );
+    }
+    return undefined;
+  });
 }
 
 function keywordsGained(keywords: string[], live: ListingVersion, next: ListingVersion): string[] {

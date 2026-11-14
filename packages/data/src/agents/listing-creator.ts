@@ -35,8 +35,10 @@ import {
   type SellerAccount,
   type Workspace,
 } from "@app/core";
+import { PROMPTS } from "@app/llm";
 import { AgentRunError } from "../data-source";
 import { assertAgentsRunning, fileWithAutonomy, finalStep } from "./autonomy";
+import { scripted, scriptedLlmCalls } from "./model-calls";
 
 /** What a listing creator run reads about one seller account. */
 export type ListingCreatorStore = {
@@ -195,6 +197,19 @@ export function startListingCreatorRun(
     summary: `Drafting a new listing for ${name}.`,
     proposalIds: [],
     steps,
+    llmCalls: scriptedLlmCalls(steps, (step) => {
+      if (step.kind === "draft") return scripted(PROMPTS.listingCreate, { productType: productType.name, facts: brief.facts, attributes: brief.attributes }, step.listing);
+      if (step.kind === "plan" && step.changes.length > 0 && step.title === "Draft attributes") {
+        const attributes = plan
+          .filter(({ status }) => status === "agent")
+          .map(({ attribute }) => ({ name: attribute.name, label: attribute.label, allowedValues: attribute.options }));
+        return scripted(PROMPTS.listingAttributes, { facts: brief.facts, copy, attributes }, { changes: step.changes });
+      }
+      if (step.kind === "review") {
+        return scripted(PROMPTS.listingReview, { facts: brief.facts, draft: copy, checks }, { scores: step.scores, summary: review.report.summary, findings: step.findings });
+      }
+      return undefined;
+    }),
     startedAt: at.toISOString(),
   });
 

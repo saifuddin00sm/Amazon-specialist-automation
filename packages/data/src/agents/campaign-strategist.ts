@@ -29,9 +29,11 @@ import {
   type SellerAccount,
   type Workspace,
 } from "@app/core";
+import { PROMPTS } from "@app/llm";
 import { AgentRunError } from "../data-source";
 import { assertAgentsRunning, fileWithAutonomy, finalStep } from "./autonomy";
 import { formatMoney, percent } from "./campaign-optimizer";
+import { scripted, scriptedLlmCalls } from "./model-calls";
 
 /** What a campaign strategist run reads about one seller account. */
 export type StrategistStore = {
@@ -161,6 +163,17 @@ export function startCampaignStrategistRun(
     summary: `Planning new campaigns for ${names.length === 1 ? names[0] : `${names.length} products`}.`,
     proposalIds: [],
     steps,
+    // One call per campaign the strategist designed; reading the brief and skipped roles are worked out in code.
+    llmCalls: scriptedLlmCalls(steps, (step) => {
+      const role = ROLES.find((candidate) => CAMPAIGN_ROLE_LABELS[candidate] === step.title);
+      if (step.kind !== "plan" || !role || step.changes.length === 0) return undefined;
+      const products = advertised.map((product) => ({
+        title: product!.title,
+        price: product!.price,
+        keywords: store.productFacts.find((facts) => facts.productId === product!.id)?.targetKeywords ?? [],
+      }));
+      return scripted(PROMPTS.campaignStrategy, { role, brief, products, guardrails }, { changes: step.changes });
+    }),
     startedAt: at.toISOString(),
   });
 

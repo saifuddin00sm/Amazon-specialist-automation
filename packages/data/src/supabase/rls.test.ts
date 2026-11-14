@@ -100,6 +100,14 @@ describe.skipIf(!env)("row-level security", () => {
     expect(bid.error?.code).toBe("42501");
   });
 
+  it("never lets members write what an agent run's model calls cost", async () => {
+    const run = dataset.agentRuns.find((candidate) => candidate.sellerAccountId === merchantAccount.id)!;
+    const updated = await as.owner.from("agent_runs").update({ llm_calls: [] }).eq("id", run.id);
+    expect(updated.error?.code).toBe("42501");
+    const appended = await as.owner.rpc("append_agent_run_llm_calls", { p_run_id: run.id, p_calls: [] });
+    expect(appended.error?.code).toBe("42501");
+  });
+
   it("keeps audit events append-only and unforgeable", async () => {
     const [event] = dataset.auditEvents.filter((candidate) => candidate.sellerAccountId === merchantAccount.id);
     expect((await as.owner.from("audit_events").delete().eq("id", event!.id)).error?.code).toBe("42501");

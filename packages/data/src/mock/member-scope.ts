@@ -1,4 +1,5 @@
 import { canSeeAccount, seesWholeWorkspace, type Member, type SellerAccount } from "@app/core";
+import { LLM_CALLS_BACKEND_ONLY } from "../agents/model-calls";
 import { CATALOG_SYNC_ONLY, CatalogSyncError } from "../catalog-sync";
 import { AgentRunError, type DataSource } from "../data-source";
 import { ProposalWriteError } from "../proposal-writes";
@@ -204,6 +205,10 @@ export function scopeToMember(source: DataSource, member: Member, accountOf: Acc
       const run = await source.getAgentRun(runId);
       if (!run || !sees(run.sellerAccountId)) throw new AgentRunError("not_found", "That agent run doesn't exist.");
       return source.completeAgentRun(runId);
+    },
+    // Model calls are logged by the backend's LLM gateway, never as a member.
+    async recordLlmCalls() {
+      throw new AgentRunError("forbidden", LLM_CALLS_BACKEND_ONLY);
     },
     async listAuditEvents({ limit, ...query }) {
       const events = await source.listAuditEvents(query);
