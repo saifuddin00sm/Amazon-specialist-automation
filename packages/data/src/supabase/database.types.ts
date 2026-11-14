@@ -27,14 +27,14 @@ isOneToOne: false
                   ]
                 },"agent_runs": {
                   Row: {
-                    "agent": Database["public"]['Enums']["agent_name"],"autonomy_level": Database["public"]['Enums']["autonomy_level"],"error": string | null,"finished_at": string | null,"id": string,"proposal_ids": (string)[],"seller_account_id": string,"started_at": string,"status": Database["public"]['Enums']["agent_run_status"],"steps": Json | null,"subject_id": string | null,"subject_type": Database["public"]['Enums']["entity_type"] | null,"summary": string,"trigger": Database["public"]['Enums']["agent_run_trigger"],"workspace_id": string
+                    "agent": Database["public"]['Enums']["agent_name"],"autonomy_level": Database["public"]['Enums']["autonomy_level"],"error": string | null,"finished_at": string | null,"id": string,"llm_calls": Json | null,"proposal_ids": (string)[],"seller_account_id": string,"started_at": string,"status": Database["public"]['Enums']["agent_run_status"],"steps": Json | null,"subject_id": string | null,"subject_type": Database["public"]['Enums']["entity_type"] | null,"summary": string,"trigger": Database["public"]['Enums']["agent_run_trigger"],"workspace_id": string
                   }
                   ComputedFields: never
                   Insert: {
-                    "agent": Database["public"]['Enums']["agent_name"],"autonomy_level": Database["public"]['Enums']["autonomy_level"],"error"?: string | null,"finished_at"?: string | null,"id": string,"proposal_ids"?: (string)[],"seller_account_id": string,"started_at": string,"status": Database["public"]['Enums']["agent_run_status"],"steps"?: Json | null,"subject_id"?: string | null,"subject_type"?: Database["public"]['Enums']["entity_type"] | null,"summary"?: string,"trigger": Database["public"]['Enums']["agent_run_trigger"],"workspace_id": string
+                    "agent": Database["public"]['Enums']["agent_name"],"autonomy_level": Database["public"]['Enums']["autonomy_level"],"error"?: string | null,"finished_at"?: string | null,"id": string,"llm_calls"?: Json | null,"proposal_ids"?: (string)[],"seller_account_id": string,"started_at": string,"status": Database["public"]['Enums']["agent_run_status"],"steps"?: Json | null,"subject_id"?: string | null,"subject_type"?: Database["public"]['Enums']["entity_type"] | null,"summary"?: string,"trigger": Database["public"]['Enums']["agent_run_trigger"],"workspace_id": string
                   }
                   Update: {
-                    "agent"?: Database["public"]['Enums']["agent_name"],"autonomy_level"?: Database["public"]['Enums']["autonomy_level"],"error"?: string | null,"finished_at"?: string | null,"id"?: string,"proposal_ids"?: (string)[],"seller_account_id"?: string,"started_at"?: string,"status"?: Database["public"]['Enums']["agent_run_status"],"steps"?: Json | null,"subject_id"?: string | null,"subject_type"?: Database["public"]['Enums']["entity_type"] | null,"summary"?: string,"trigger"?: Database["public"]['Enums']["agent_run_trigger"],"workspace_id"?: string
+                    "agent"?: Database["public"]['Enums']["agent_name"],"autonomy_level"?: Database["public"]['Enums']["autonomy_level"],"error"?: string | null,"finished_at"?: string | null,"id"?: string,"llm_calls"?: Json | null,"proposal_ids"?: (string)[],"seller_account_id"?: string,"started_at"?: string,"status"?: Database["public"]['Enums']["agent_run_status"],"steps"?: Json | null,"subject_id"?: string | null,"subject_type"?: Database["public"]['Enums']["entity_type"] | null,"summary"?: string,"trigger"?: Database["public"]['Enums']["agent_run_trigger"],"workspace_id"?: string
                   }
                   Relationships: [
                     {
@@ -311,8 +311,11 @@ isOneToOne: false
             [_ in never]: never
           }
           Functions: {
-            "commit_proposal_transition":
-{ Args: { "p_events": Json,"p_from": Database["public"]["Enums"]["proposal_status"][],"p_proposal": Json,"p_retire_listing_version_id"?: string }; Returns: boolean
+            "append_agent_run_llm_calls":
+{ Args: { "p_calls": Json,"p_run_id": string }; Returns: boolean
+                           },
+"commit_proposal_transition":
+{ Args: { "p_events": Json,"p_from": (Database["public"]['Enums']["proposal_status"])[],"p_proposal": Json,"p_retire_listing_version_id"?: string }; Returns: boolean
                            },
 "connect_seller_account":
 { Args: { "p_account": Json,"p_events": Json }; Returns: undefined
