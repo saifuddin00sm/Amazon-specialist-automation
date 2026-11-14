@@ -1,0 +1,27 @@
+{
+  "name": "@app/llm",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./anthropic": "./src/providers/anthropic.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.8.0",
+    "@app/core": "workspace:*",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@app/eslint-config": "workspace:*",
+    "@types/node": "^24.19.2",
+    "eslint": "^9",
+    "typescript": "^5",
+    "vitest": "^5.0.5"
+  }
+}
