@@ -38,6 +38,17 @@ export function formatMoneyCompact(amount: number, currency: Currency): string {
   return new Intl.NumberFormat("en-US", { style: "currency", currency, notation: "compact", maximumFractionDigits: 1 }).format(amount);
 }
 
+/** What model calls cost, in US dollars. Calls cost fractions of a cent, so small amounts keep four decimals: "$0.0123". */
+export function formatUsd(amount: number): string {
+  const digits = amount >= 1 ? 2 : 4;
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: digits, maximumFractionDigits: digits }).format(amount);
+}
+
+/** Token counts: 1234 → "1,234"; 12345 → "12.3K". */
+export function formatTokens(count: number): string {
+  return count < 10_000 ? count.toLocaleString("en-US") : new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 }).format(count);
+}
+
 /** A fraction as a percentage: 0.284 → "28.4%". */
 export function formatPercent(fraction: number, fractionDigits = 1): string {
   return `${(fraction * 100).toFixed(fractionDigits)}%`;

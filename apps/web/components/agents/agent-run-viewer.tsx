@@ -1,14 +1,14 @@
 "use client";
 
-import { hasBlockingFailure, newCampaignPath, newListingPath, type AgentRun, type AgentRunStep } from "@app/core";
+import { hasBlockingFailure, llmUsage, newCampaignPath, newListingPath, type AgentRun, type AgentRunStep, type LlmCall } from "@app/core";
 import { cn } from "cn";
-import { Check, CircleDashed, FastForward, Loader2, RotateCcw } from "lucide-react";
+import { Check, CircleDashed, Cpu, FastForward, Loader2, RotateCcw } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { AIGeneratedBadge } from "@/components/ai-generated-badge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { AGENT_LABELS, formatDateTime } from "@/lib/format";
+import { AGENT_LABELS, formatDateTime, formatTokens, formatUsd } from "@/lib/format";
 
 /** Characters revealed per tick, and the tick length. About 200 characters a second. */
 const CHARS_PER_TICK = 6;
@@ -19,6 +19,7 @@ const DWELL_TICKS = 12;
 type Playback = { step: number; chars: number; dwell: number; playing: boolean };
 
 const NO_STEPS: AgentRunStep[] = [];
+const NO_CALLS: LlmCall[] = [];
 
 /**
  * Replays an AgentRun's steps as a vertical timeline, streaming each step's text the way the agent
@@ -35,6 +36,9 @@ export function AgentRunViewer({
   onPlaybackEnd?: () => void;
 }) {
   const steps = run.steps ?? NO_STEPS;
+  const calls = run.llmCalls ?? NO_CALLS;
+  const unplaced = calls.filter((call) => !steps.some((step) => step.id === call.stepId));
+  const usage = llmUsage(calls);
   const [playback, setPlayback] = useState<Playback>(() =>
     autoPlay ? { step: 0, chars: 0, dwell: 0, playing: true } : { step: steps.length, chars: 0, dwell: 0, playing: false },
   );
@@ -66,7 +70,17 @@ export function AgentRunViewer({
           <h3 className="text-sm font-semibold">
             {AGENT_LABELS[run.agent]} · <span className="font-normal text-muted-foreground">{run.id}</span>
           </h3>
-          <p className="text-xs text-muted-foreground">Started {formatDateTime(run.startedAt)}</p>
+          <p className="text-xs text-muted-foreground">
+            Started {formatDateTime(run.startedAt)}
+            {usage.calls > 0 && (
+              <span data-testid="llm-usage">
+                {" "}
+                · {usage.calls} model {usage.calls === 1 ? "call" : "calls"} · {formatTokens(usage.inputTokens + usage.outputTokens)} tokens ·{" "}
+                {formatUsd(usage.costUsd)}
+                {calls.some((call) => call.provider === "scripted") && " est."}
+              </span>
+            )}
+          </p>
         </div>
         <RunStatusBadge run={run} playing={!done} />
         <AIGeneratedBadge actor={{ type: "agent", agent: run.agent, agentRunId: run.id }} />
@@ -124,11 +138,19 @@ export function AgentRunViewer({
                       {state === "active" && <span aria-hidden className="ml-0.5 inline-block h-4 w-1.5 animate-pulse bg-foreground/60 align-text-bottom" />}
                     </div>
                   )}
+                  {state === "done" && <LlmCalls calls={calls.filter((call) => call.stepId === step.id)} />}
                 </div>
               </li>
             );
           })}
         </ol>
+      )}
+
+      {done && unplaced.length > 0 && (
+        <div className="flex flex-col gap-1.5">
+          <h4 className="text-xs font-medium text-muted-foreground">Other model calls</h4>
+          <LlmCalls calls={unplaced} />
+        </div>
       )}
     </section>
   );
@@ -215,6 +237,59 @@ function StepOutcome({ step, run }: { step: AgentRunStep; run: AgentRun }) {
     case "draft":
       return null;
   }
+}
+
+const OUTCOME_LABELS: Record<Exclude<LlmCall["outcome"], "ok">, string> = {
+  invalid_output: "Invalid output",
+  refused: "Refused",
+  error: "Failed",
+};
+
+/** The model calls behind a step: prompt version, model, tokens and cost of each. */
+function LlmCalls({ calls }: { calls: LlmCall[] }) {
+  if (calls.length === 0) return null;
+  return (
+    <ul className="flex flex-col gap-1" aria-label="Model calls">
+      {calls.map((call) => {
+        // Scripted calls stand in for a model; their tokens are estimated from the prompt's length.
+        const estimate = call.provider === "scripted" ? "~" : "";
+        return (
+          <li
+            key={call.id}
+            data-testid="llm-call"
+            className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground tabular-nums"
+            title={call.error}
+          >
+            <Cpu className="size-3.5 shrink-0" aria-hidden />
+            <span className="font-mono text-foreground">
+              {call.promptId} v{call.promptVersion}
+            </span>
+            <span>{call.model}</span>
+            <span>
+              {estimate}
+              {formatTokens(call.inputTokens + call.cacheReadTokens + call.cacheWriteTokens)} in · {estimate}
+              {formatTokens(call.outputTokens)} out
+            </span>
+            <span>
+              {estimate}
+              {formatUsd(call.costUsd)}
+            </span>
+            {call.attempt > 1 && <span>attempt {call.attempt}</span>}
+            {call.outcome !== "ok" && (
+              <Badge variant="outline" className="border-amber-500/40 text-amber-700 dark:text-amber-300">
+                {OUTCOME_LABELS[call.outcome]}
+              </Badge>
+            )}
+            {call.provider === "scripted" && (
+              <Badge variant="outline" className="text-muted-foreground" title="Phase 1 stand-in: no model was called; tokens and cost are estimates.">
+                Simulated
+              </Badge>
+            )}
+          </li>
+        );
+      })}
+    </ul>
+  );
 }
 
 function RunStatusBadge({ run, playing }: { run: AgentRun; playing: boolean }) {
