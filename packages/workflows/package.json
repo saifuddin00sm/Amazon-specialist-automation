@@ -10,13 +10,15 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "vitest run",
-    "connect-seller": "tsx scripts/connect-seller.ts"
+    "connect-seller": "tsx scripts/connect-seller.ts",
+    "eval:listing-optimizer": "tsx scripts/eval-listing-optimizer.ts"
   },
   "dependencies": {
     "@app/amazon": "workspace:*",
     "@app/core": "workspace:*",
     "@app/data": "workspace:*",
     "@app/llm": "workspace:*",
+    "@app/rules": "workspace:*",
     "@supabase/supabase-js": "^2.118.0",
     "inngest": "4.26.2",
     "zod": "^4.6.7"

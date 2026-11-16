@@ -14,6 +14,7 @@
     "db:reset": "supabase db reset && pnpm db:seed",
     "db:seed": "pnpm --filter @app/data db:seed",
     "amazon:connect-seller": "pnpm --filter @app/workflows connect-seller",
+    "eval:listing-optimizer": "pnpm --filter @app/workflows eval:listing-optimizer",
     "db:types": "supabase gen types typescript --local --schema public > packages/data/src/supabase/database.types.ts",
     "test:supabase": "pnpm --filter @app/data test:supabase"
   },
