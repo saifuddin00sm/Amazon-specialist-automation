@@ -25,7 +25,7 @@ test("run optimizer replays the run and files a proposal in the inbox", async ({
   for (const call of await calls.all()) {
     for (const part of [/\.\w+ v\d+/, /claude-[\w-]+/, /[\d,.K]+ in · ~?[\d,.K]+ out/, /\$\d+\.\d+/]) await expect(call).toContainText(part);
   }
-  await expect(calls.first()).toContainText("listing_writer.rewrite v1");
+  await expect(calls.first()).toContainText("listing_writer.rewrite v2");
   await expect(calls.nth(1)).toContainText("listing_reviewer.review v1");
   await expect(viewer.getByTestId("llm-usage")).toContainText("4 model calls");
   await expect(page.getByText("Proposal added to the approval inbox")).toBeVisible();

@@ -16,6 +16,7 @@
   "dependencies": {
     "@app/core": "workspace:*",
     "@app/llm": "workspace:*",
+    "@app/rules": "workspace:*",
     "@faker-js/faker": "^10.6.0",
     "@supabase/supabase-js": "^2.118.0"
   },

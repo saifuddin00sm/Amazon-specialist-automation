@@ -1,5 +1,6 @@
 import {
   AgentRunSchema,
+  LISTING_LIMITS,
   ListingVersionSchema,
   ProposalSchema,
   ReviewSchema,
@@ -7,6 +8,7 @@ import {
   canActOnAccount,
   checkListingCompliance,
   checkProposalCompliance,
+  factSheet,
   type Actor,
   type AgentRun,
   type AgentRunStep,
@@ -24,9 +26,10 @@ import {
   type Workspace,
 } from "@app/core";
 import { PROMPTS } from "@app/llm";
+import { listingClaims } from "@app/rules";
 import { AgentRunError } from "../data-source";
 import { assertAgentsRunning, fileWithAutonomy, finalStep } from "./autonomy";
-import { planListingOptimizerRun } from "./listing-optimizer";
+import { planListingOptimizerRun, standInDraft } from "./listing-optimizer";
 import { scripted, scriptedLlmCalls } from "./model-calls";
 
 /** The parts of the mock's in-memory store that agent runs read. */
@@ -225,11 +228,21 @@ export function completeListingOptimizerRun(
 function listingOptimizerCalls(steps: AgentRunStep[], product: Product, facts: ProductFacts, live: ListingVersion): LlmCall[] {
   const drafts = steps.filter((step) => step.kind === "draft");
   const reviews = steps.filter((step) => step.kind === "review");
+  const sheet = factSheet(product.brand, facts);
   return scriptedLlmCalls(steps, (step) => {
     if (step.kind === "draft") {
       // Each revision answers the previous round's findings.
       const findings = reviews.find((review) => review.round === step.round - 1)?.findings ?? [];
-      return scripted(PROMPTS.listingRewrite, { brand: product.brand, productTitle: product.title, facts, live, findings }, step.listing);
+      const input = {
+        productType: product.category,
+        limits: LISTING_LIMITS,
+        facts: sheet,
+        prohibitedClaims: listingClaims(facts.prohibitedClaims).map((claim) => claim.phrase),
+        keywords: facts.targetKeywords,
+        live,
+        findings,
+      };
+      return scripted(PROMPTS.listingRewrite, input, standInDraft(live, step.listing, sheet));
     }
     if (step.kind === "review") {
       const draft = drafts.find((candidate) => candidate.round === step.round);

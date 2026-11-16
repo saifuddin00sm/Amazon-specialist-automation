@@ -452,9 +452,9 @@ export function describeDataSourceContract(
         const modelSteps = run.steps!.filter((step) => step.kind === "draft" || step.kind === "review");
         expect(run.llmCalls?.map((call) => call.stepId)).toEqual(modelSteps.map((step) => step.id));
         expect(run.llmCalls?.map((call) => `${call.promptId}@v${call.promptVersion}`)).toEqual([
-          "listing_writer.rewrite@v1",
+          "listing_writer.rewrite@v2",
           "listing_reviewer.review@v1",
-          "listing_writer.rewrite@v1",
+          "listing_writer.rewrite@v2",
           "listing_reviewer.review@v1",
         ]);
         for (const call of run.llmCalls!) {

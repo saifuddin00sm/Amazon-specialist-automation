@@ -1,3 +1,4 @@
+import { LISTING_LIMITS, factSheet } from "@app/core";
 import { createMockDataSource, generateMockDataset } from "@app/data";
 import { PROMPTS, type LlmProvider } from "@app/llm";
 import { describe, expect, it } from "vitest";
@@ -27,7 +28,11 @@ describe("agentRunGateway", () => {
       dataPolicy: { trainsOnInputs: false, basis: "test" },
       complete: async ({ model }) => ({
         model,
-        text: JSON.stringify({ title: live.title, bullets: live.bullets, description: live.description, backendKeywords: live.backendKeywords }),
+        text: JSON.stringify({
+          listing: { title: live.title, bullets: live.bullets, description: live.description, backendKeywords: live.backendKeywords },
+          changes: [],
+          claims: [],
+        }),
         stopReason: "end",
         usage: { inputTokens: 800, outputTokens: 300, cacheReadTokens: 0, cacheWriteTokens: 0 },
       }),
@@ -35,7 +40,15 @@ describe("agentRunGateway", () => {
     const gateway = agentRunGateway({ dataSource, provider, runId: run.id });
     await gateway.generate({
       prompt: PROMPTS.listingRewrite,
-      input: { brand: product.brand, productTitle: product.title, facts, live, findings: [] },
+      input: {
+        productType: product.category,
+        limits: LISTING_LIMITS,
+        facts: factSheet(product.brand, facts),
+        prohibitedClaims: facts.prohibitedClaims,
+        keywords: facts.targetKeywords,
+        live,
+        findings: [],
+      },
       stepId: draftStep.id,
     });
 
@@ -45,7 +58,7 @@ describe("agentRunGateway", () => {
       stepId: draftStep.id,
       provider: "anthropic",
       promptId: "listing_writer.rewrite",
-      promptVersion: 1,
+      promptVersion: 2,
       model: "claude-opus-5-5",
       inputTokens: 800,
       outputTokens: 300,
