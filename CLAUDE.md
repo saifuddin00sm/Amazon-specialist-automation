@@ -14,6 +14,7 @@
 - done: Compliance guard, no LLM.
 - done: LLM gateway (packages/llm). Stand-in agents log scripted calls through it
 - done: list optimizer
+- done: new listing creation
 
 ## Stack
 - pnpm + Turborepo monorepo; TypeScript strict everywhere
