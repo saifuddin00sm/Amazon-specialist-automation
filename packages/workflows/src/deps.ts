@@ -5,7 +5,10 @@ import {
   createRefreshTokenVault,
   createSpApiClient,
   encryptionKeyFromEnv,
+  loadProductTypeSchema,
   lwaCredentialsFromEnv,
+  type JsonSchema,
+  type ProductTypeDefinition,
   type RefreshTokenStore,
   type SpApiClient,
   type SpApiClientOptions,
@@ -19,7 +22,9 @@ import {
   type DataSource,
   type Database,
 } from "@app/data";
+import type { LlmProvider } from "@app/llm";
 import { createClient } from "@supabase/supabase-js";
+import { llmProvider } from "./llm";
 
 /** What the workflows work with; tests and scripts supply their own. */
 export type WorkflowDeps = {
@@ -30,6 +35,21 @@ export type WorkflowDeps = {
   amazon(region: SpApiRegion): Pick<SpApiClient, "searchListingsItems">;
   now(): Date;
 };
+
+/** The SP-API operations the newListing workflow calls. */
+export type NewListingAmazon = Pick<SpApiClient, "getListingsRestrictions" | "getDefinitionsProductType" | "putListingsItem" | "getListingsItem">;
+
+/** What the newListing workflow works with, on top of the data and the clock. */
+export type NewListingDeps = Pick<WorkflowDeps, "dataSource" | "authorizations" | "now"> & {
+  amazon(region: SpApiRegion): NewListingAmazon;
+  /** A product type's JSON schema, from its definition: downloaded and checksummed, or the sandbox's stand-in. */
+  productTypeSchema(definition: ProductTypeDefinition): Promise<JsonSchema>;
+  /** The model provider the workflow's LLM gateways call. */
+  llm(): LlmProvider;
+};
+
+/** Everything every workflow needs, as built from the environment. */
+export type AllWorkflowDeps = WorkflowDeps & NewListingDeps;
 
 /**
  * SP-API clients, one per region, sharing one access token provider and one rate limiter so every
@@ -66,21 +86,26 @@ const NO_AUTHORIZATIONS: AmazonAuthorizationStore = {
  * SUPABASE_SECRET_KEY, where Amazon authorizations are kept too; mock (the default) works on the
  * in-memory dataset, which has none, so there is nothing to sync.
  */
-export function workflowDepsFromEnv(env: NodeJS.ProcessEnv = process.env): WorkflowDeps {
+export function workflowDepsFromEnv(env: NodeJS.ProcessEnv = process.env): AllWorkflowDeps {
+  const base = {
+    productTypeSchema: (definition: ProductTypeDefinition) => loadProductTypeSchema(definition, { environment: amazonEnvironment(env) }),
+    llm: llmProvider,
+    now: () => new Date(),
+  };
   if (env.DATA_SOURCE !== "supabase") {
-    return { dataSource: getMockDataSource(), authorizations: NO_AUTHORIZATIONS, amazon: amazonClients(NO_AUTHORIZATIONS, env), now: () => new Date() };
+    return { ...base, dataSource: getMockDataSource(), authorizations: NO_AUTHORIZATIONS, amazon: amazonClients(NO_AUTHORIZATIONS, env) };
   }
   const { SUPABASE_URL: url, SUPABASE_SECRET_KEY: secretKey } = env;
   if (!url || !secretKey) throw new Error("Background work with DATA_SOURCE=supabase needs SUPABASE_URL and SUPABASE_SECRET_KEY.");
   const admin = createClient<Database>(url, secretKey, { auth: { persistSession: false, autoRefreshToken: false } });
   const authorizations = createSupabaseAmazonAuthorizationStore(admin);
-  return { dataSource: createSupabaseDataSource(admin), authorizations, amazon: amazonClients(authorizations, env), now: () => new Date() };
+  return { ...base, dataSource: createSupabaseDataSource(admin), authorizations, amazon: amazonClients(authorizations, env) };
 }
 
-let deps: WorkflowDeps | undefined;
+let deps: AllWorkflowDeps | undefined;
 
 /** One set per process, so access tokens and rate limits carry across function runs. */
-export function workflowDeps(): WorkflowDeps {
+export function workflowDeps(): AllWorkflowDeps {
   deps ??= workflowDepsFromEnv();
   return deps;
 }
