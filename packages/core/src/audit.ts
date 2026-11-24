@@ -20,6 +20,8 @@ export const AuditActionSchema = z.enum([
   "agents.paused",
   "agents.resumed",
   "catalog.synced",
+  /** Amazon's latest word on a submitted new listing: its issues, or that it went live. */
+  "proposal.listing_updated",
 ]);
 export type AuditAction = z.infer<typeof AuditActionSchema>;
 

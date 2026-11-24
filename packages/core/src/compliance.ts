@@ -22,6 +22,9 @@ export type ListingCopy = Pick<ListingVersion, "title" | "bullets" | "descriptio
 
 export const LISTING_COPY_FIELDS = ["title", "bullets", "description", "backendKeywords"] as const;
 
+/** A listing with no copy yet: what a new listing's draft is measured against. */
+export const EMPTY_LISTING_COPY: ListingCopy = { title: "", bullets: [], description: "", backendKeywords: "" };
+
 /** Phrases Amazon restricts in listing copy for every product. */
 export const RESTRICTED_TERMS = [
   "best seller",
@@ -224,6 +227,19 @@ export const CERTIFIED_CLAIMS = [
   "FSC certified",
   "OEKO-TEX",
 ] as const;
+
+/** The certified claims a product may not make: those it holds no certification for. */
+export function uncertifiedClaims(certifications: readonly string[]): string[] {
+  const held = new Set(certifications.map((certification) => certification.trim().toLowerCase()));
+  return CERTIFIED_CLAIMS.filter((claim) => !held.has(claim.toLowerCase()));
+}
+
+const CHECK_MARKS: Record<ComplianceStatus, string> = { pass: "✓", warn: "!", fail: "✗" };
+
+/** "✓ Title length – 74 of 200 characters", for an agent run's timeline. */
+export function checkLine(check: ComplianceCheck): string {
+  return `${CHECK_MARKS[check.status]} ${check.label}${check.detail ? ` – ${check.detail}` : ""}`;
+}
 
 /** The listing a new_listing proposal would create: readable lines, Amazon's copy limits, backed claims and photos. */
 function checkNewListing(diff: DiffEntry[]): ComplianceCheck[] {

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { ActorSchema, EntityRefSchema, IdSchema, IsoDateTimeSchema } from "./common";
 import { DataFreshnessSchema } from "./freshness";
+import { ListingSubmissionSchema } from "./listing-submission";
 
 export const ProposalTypeSchema = z.enum([
   "listing_update",
@@ -85,6 +86,8 @@ export const ProposalSchema = z
     decidedAt: IsoDateTimeSchema.optional(),
     decisionNote: z.string().optional(),
     appliedAt: IsoDateTimeSchema.optional(),
+    /** A new_listing's submission to Amazon: set when it is published or fails, then kept up to date. */
+    listingSubmission: ListingSubmissionSchema.optional(),
   })
   .superRefine((proposal, ctx) => {
     if (DECIDED_STATUSES.has(proposal.status) && (!proposal.decidedBy || !proposal.decidedAt)) {
@@ -105,6 +108,9 @@ export const ProposalSchema = z
     }
     if (proposal.status === "rejected" && proposal.decidedBy?.type === "member" && !proposal.decisionNote?.trim()) {
       ctx.addIssue({ code: "custom", message: "A member rejection needs a reason", path: ["decisionNote"] });
+    }
+    if (proposal.listingSubmission && (proposal.type !== "new_listing" || (proposal.status !== "applied" && proposal.status !== "failed"))) {
+      ctx.addIssue({ code: "custom", message: "Only a published or failed new listing has a submission", path: ["listingSubmission"] });
     }
   });
 export type Proposal = z.infer<typeof ProposalSchema>;

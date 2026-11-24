@@ -1,5 +1,7 @@
 import { z } from "zod";
+import { AsinSchema } from "./catalog";
 import type { ListingCopy } from "./compliance";
+import type { FactSheetEntry } from "./listing-draft";
 import type { DiffEntry } from "./proposal";
 
 /**
@@ -97,6 +99,9 @@ export const LISTING_COPY_ATTRIBUTES = {
   backendKeywords: "generic_keyword",
 } as const;
 
+/** Attribute names that hold listing copy. */
+export const LISTING_COPY_ATTRIBUTE_NAMES: ReadonlySet<string> = new Set(Object.values(LISTING_COPY_ATTRIBUTES));
+
 /** Search results: which product type a product is, before its schema is loaded. */
 export const ProductTypeSummarySchema = z.object({
   name: ProductTypeNameSchema,
@@ -129,8 +134,47 @@ export const NewListingBriefSchema = z.object({
   facts: NewProductFactsSchema,
   /** Values the seller entered for attributes no fact fills and the agent may not draft, by attribute name. */
   attributes: z.record(z.string(), z.string().trim().min(1)),
+  /**
+   * The product's ASIN when it is already in Amazon's catalog. Amazon checks listing restrictions by
+   * ASIN; a product without one is checked when its listing is submitted.
+   */
+  asin: AsinSchema.optional(),
 });
 export type NewListingBrief = z.infer<typeof NewListingBriefSchema>;
+
+/** A product fact a required attribute needs and the seller hasn't given, for the seller to supply. */
+export const MissingFactSchema = z.object({
+  /** Amazon's attribute name. */
+  attribute: z.string().min(1),
+  label: z.string().min(1),
+  /** What the seller needs to tell us, in their words. */
+  need: z.string().min(1),
+});
+export type MissingFact = z.infer<typeof MissingFactSchema>;
+
+/**
+ * The SKU a new listing is submitted under, from its proposal so a retried submission reuses it.
+ * Amazon allows 40 characters.
+ */
+export function newListingSku(proposalId: string): string {
+  return `NL-${proposalId.replace(/^prop_/, "").replace(/[^A-Za-z0-9]/g, "").slice(-16).toUpperCase()}`;
+}
+
+/**
+ * Everything a new listing may claim, one entry per fact: the seller's product facts and the values
+ * they entered in the wizard. Photos are links, not claims, so they aren't in it.
+ */
+export function newListingFactSheet(brief: Pick<NewListingBrief, "facts" | "attributes">, labels: Readonly<Record<string, string>> = {}): FactSheetEntry[] {
+  const { facts } = brief;
+  return [
+    { ref: "brand", fact: facts.brand },
+    { ref: "productName", fact: facts.productName },
+    ...facts.materials.map((fact, i) => ({ ref: `materials.${i}`, fact })),
+    { ref: "dimensions", fact: formatDimensions(facts.dimensions) },
+    ...facts.certifications.map((fact, i) => ({ ref: `certifications.${i}`, fact })),
+    ...Object.entries(brief.attributes).map(([name, value]) => ({ ref: `attributes.${name}`, fact: labels[name] ? `${labels[name]}: ${value}` : value })),
+  ];
+}
 
 /** One attribute's value: text, or a list for attributes that take several. */
 export const AttributeValueSchema = z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]);
@@ -154,6 +198,27 @@ export type AttributePlan = { attribute: ProductTypeAttribute; status: Attribute
 /** Attributes the seller types a value for: no fact fills them and the agent may not draft them. */
 export function sellerAttributes(productType: ProductType): ProductTypeAttribute[] {
   return productType.attributes.filter((attribute) => !attribute.fromFact && !attribute.draftable);
+}
+
+/** Each attribute's label, by name. */
+export function attributeLabels(productType: Pick<ProductType, "attributes">): Record<string, string> {
+  return Object.fromEntries(productType.attributes.map((attribute) => [attribute.name, attribute.label]));
+}
+
+/** Attributes the listing writer fills besides the copy: the ones the agent drafts. */
+export function writerAttributes(plan: readonly AttributePlan[]): ProductTypeAttribute[] {
+  return plan.filter(({ attribute, status }) => status === "agent" && !LISTING_COPY_ATTRIBUTE_NAMES.has(attribute.name)).map(({ attribute }) => attribute);
+}
+
+/** An attribute as the listing writer's prompt describes it. */
+export function writerAttributeInput(attribute: ProductTypeAttribute) {
+  return {
+    name: attribute.name,
+    label: attribute.label,
+    description: attribute.description,
+    multiple: attribute.multiple,
+    ...(attribute.options ? { allowedValues: attribute.options } : {}),
+  };
 }
 
 /** "30 × 8 × 8 cm" */
