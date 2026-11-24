@@ -7,6 +7,7 @@ import {
   type Actor,
   type AttributeSource,
   type DiffEntry,
+  type ListingSubmission,
   type ProductType,
 } from "@app/core";
 import { AIGeneratedBadge } from "@/components/ai-generated-badge";
@@ -18,9 +19,20 @@ const SOURCE_LABELS: Record<Exclude<AttributeSource, "agent">, string> = { facts
 
 /**
  * The listing a new_listing proposal would create: its copy, then every attribute with where its value
- * came from. Agent-drafted values carry the AIGenerated badge. Nothing here is on Amazon yet.
+ * came from. Agent-drafted values carry the AIGenerated badge. Once it is submitted, what Amazon said
+ * about it comes first.
  */
-export function NewListingDraft({ diff, productType, createdBy }: { diff: DiffEntry[]; productType?: ProductType; createdBy: Actor }) {
+export function NewListingDraft({
+  diff,
+  productType,
+  createdBy,
+  submission,
+}: {
+  diff: DiffEntry[];
+  productType?: ProductType;
+  createdBy: Actor;
+  submission?: ListingSubmission;
+}) {
   const { attributes } = parseNewListing(diff);
   const copy = newListingCopy(attributes);
   const schema = new Map(productType?.attributes.map((attribute) => [attribute.name, attribute]));
@@ -32,6 +44,7 @@ export function NewListingDraft({ diff, productType, createdBy }: { diff: DiffEn
 
   return (
     <div className="flex flex-col gap-4" data-testid="new-listing-draft">
+      {submission && <SubmissionStatus submission={submission} />}
       <div className="flex flex-col gap-3 rounded-xl border bg-card p-4">
         <CopyField label="Title" meta={`${copy.title.length} characters`} badge={badge(LISTING_COPY_ATTRIBUTES.title)}>
           <p className="font-medium">{copy.title || "–"}</p>
@@ -99,6 +112,44 @@ export function NewListingDraft({ diff, productType, createdBy }: { diff: DiffEn
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+const SUBMISSION_STATUS: Record<ListingSubmission["status"], { label: string; text: string; variant: "default" | "secondary" | "destructive" }> = {
+  accepted: { label: "Submitted", text: "Amazon accepted the listing and is processing it.", variant: "secondary" },
+  has_issues: { label: "Has issues", text: "Amazon is holding the listing back until these are fixed.", variant: "destructive" },
+  invalid: { label: "Refused", text: "Amazon refused the listing; nothing was listed.", variant: "destructive" },
+  live: { label: "Live", text: "Shoppers can find the listing on Amazon.", variant: "default" },
+};
+
+/** What Amazon said about the listing since it was submitted, in its own words. */
+function SubmissionStatus({ submission }: { submission: ListingSubmission }) {
+  const status = SUBMISSION_STATUS[submission.status];
+  return (
+    <div className="flex flex-col gap-2 rounded-xl border bg-card p-4 text-sm" data-testid="listing-submission">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs font-medium text-muted-foreground">On Amazon</span>
+        <Badge variant={status.variant}>{status.label}</Badge>
+        <span className="ml-auto font-mono text-xs text-muted-foreground">
+          SKU {submission.sku}
+          {submission.asin && ` · ASIN ${submission.asin}`}
+        </span>
+      </div>
+      <p>{status.text}</p>
+      {submission.issues.length > 0 && (
+        <ul className="flex flex-col gap-1" aria-label="Amazon's issues">
+          {submission.issues.map((issue) => (
+            <li key={`${issue.code}-${issue.message}`} className="flex gap-2">
+              <span className="text-xs font-medium text-muted-foreground uppercase">{issue.severity.toLowerCase()}</span>
+              <span>
+                {issue.message}
+                {issue.attributeNames && <span className="font-mono text-xs text-muted-foreground"> ({issue.attributeNames.join(", ")})</span>}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

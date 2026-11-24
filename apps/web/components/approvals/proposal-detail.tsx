@@ -225,7 +225,7 @@ export function ProposalDetail({
             createdBy={proposal.createdBy}
           />
         ) : proposal.type === "new_listing" ? (
-          <NewListingDraft diff={proposal.diff} productType={item.productType} createdBy={proposal.createdBy} />
+          <NewListingDraft diff={proposal.diff} productType={item.productType} createdBy={proposal.createdBy} submission={proposal.listingSubmission} />
         ) : (
           <DiffView diff={proposal.diff} currency={account.currency} />
         )}

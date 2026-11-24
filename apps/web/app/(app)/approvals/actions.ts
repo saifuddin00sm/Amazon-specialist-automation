@@ -1,7 +1,8 @@
 "use server";
 
-import { DECISION_NOTE_MAX_LENGTH, DiffEditSchema } from "@app/core";
+import { DECISION_NOTE_MAX_LENGTH, DiffEditSchema, type Proposal } from "@app/core";
 import { ProposalWriteError } from "@app/data";
+import { announceDecisions } from "@app/workflows";
 import { refresh } from "next/cache";
 import { z } from "zod";
 import { getDataSource } from "@/lib/data";
@@ -25,21 +26,21 @@ export async function approveProposals(input: z.input<typeof ApproveInput>): Pro
   const parsed = ApproveInput.safeParse(input);
   if (!parsed.success) return invalid(input, parsed.error);
   const { ids, note } = parsed.data;
-  return forEachProposal(ids, async (proposalId, memberId) => (await getDataSource()).approveProposal({ proposalId, memberId, note }));
+  return forEachProposal(ids, async (proposalId, memberId) => (await getDataSource()).approveProposal({ proposalId, memberId, note }), { announce: true });
 }
 
 export async function approveProposalWithEdits(input: z.input<typeof ApproveWithEditsInput>): Promise<ActionResult> {
   const parsed = ApproveWithEditsInput.safeParse(input);
   if (!parsed.success) return invalid({ ids: [input.id] }, parsed.error);
   const { id, edits, note } = parsed.data;
-  return forEachProposal([id], async (proposalId, memberId) => (await getDataSource()).approveProposal({ proposalId, memberId, note, edits }));
+  return forEachProposal([id], async (proposalId, memberId) => (await getDataSource()).approveProposal({ proposalId, memberId, note, edits }), { announce: true });
 }
 
 export async function rejectProposals(input: z.input<typeof RejectInput>): Promise<ActionResult> {
   const parsed = RejectInput.safeParse(input);
   if (!parsed.success) return invalid(input, parsed.error);
   const { ids, reason } = parsed.data;
-  return forEachProposal(ids, async (proposalId, memberId) => (await getDataSource()).rejectProposal({ proposalId, memberId, reason }));
+  return forEachProposal(ids, async (proposalId, memberId) => (await getDataSource()).rejectProposal({ proposalId, memberId, reason }), { announce: true });
 }
 
 export async function snoozeProposals(input: z.input<typeof SnoozeInput>): Promise<ActionResult> {
@@ -59,21 +60,24 @@ export async function publishProposals(input: z.input<typeof PublishInput>): Pro
 
 /**
  * Runs one write per proposal as the acting member of the proposal's workspace. Each write records
- * its own AuditEvent in the DataSource; refusals come back as messages instead of throwing.
+ * its own AuditEvent in the DataSource; refusals come back as messages instead of throwing. With
+ * `announce`, workflows waiting on a decided proposal hear about it (a new listing's submission).
  */
 async function forEachProposal(
   ids: string[],
-  write: (proposalId: string, memberId: string) => Promise<unknown>,
+  write: (proposalId: string, memberId: string) => Promise<Proposal>,
+  { announce = false }: { announce?: boolean } = {},
 ): Promise<ActionResult> {
   const dataSource = await getDataSource();
   const result: ActionResult = { done: [], errors: [] };
+  const decided: Proposal[] = [];
 
   for (const proposalId of new Set(ids)) {
     const proposal = await dataSource.getProposal(proposalId);
     const member = proposal && (await dataSource.getActingMember(proposal.workspaceId));
     try {
       if (!proposal || !member) throw new ProposalWriteError("not_found", "That proposal no longer exists.");
-      await write(proposalId, member.id);
+      decided.push(await write(proposalId, member.id));
       result.done.push(proposalId);
     } catch (error) {
       if (!(error instanceof ProposalWriteError)) throw error;
@@ -81,6 +85,7 @@ async function forEachProposal(
     }
   }
 
+  if (announce) await announceDecisions(decided);
   if (result.done.length > 0) refresh();
   return result;
 }
