@@ -7,6 +7,7 @@ import {
   type AgentRun,
   type CampaignBrief,
   type ImportedListing,
+  type ListingSubmission,
   type LlmCall,
   type NewListingBrief,
 } from "@app/core";
@@ -1082,6 +1083,174 @@ export function describeDataSourceContract(
         expect([first.status, second.status, strategist.status]).toEqual(["running", "running", "running"]);
         const filed = await Promise.all([first, second].map((run) => source.completeAgentRun(run.id)));
         expect(filed.map(({ proposal }) => proposal?.title)).toEqual(["New listing: Trailcraft Insulated Water Bottle", "New listing: Trailcraft Kids Water Bottle"]);
+      });
+    });
+
+    describe("newListing workflow runs", () => {
+      const subject = () => {
+        const { merchant } = workspaces();
+        const brief: NewListingBrief = {
+          productType: "BOTTLE",
+          facts: {
+            brand: "Trailcraft",
+            productName: "Insulated Water Bottle",
+            materials: ["18/8 Stainless Steel"],
+            dimensions: { lengthCm: 7.5, widthCm: 7.5, heightCm: 26 },
+            certifications: [],
+            photos: ["https://images.example.com/bottle-main.jpg"],
+          },
+          attributes: { country_of_origin: "Vietnam", capacity: "750 ml" },
+        };
+        return { merchant, account: merchantAccount(), brief, owner: memberOf(merchant.id, "owner"), viewer: memberOf(merchant.id, "viewer") };
+      };
+      /** The steps a workflow would append, and their model calls: the stand-in's, under the workflow's run id. */
+      const workFor = async (source: DataSource, runId: string) => {
+        const { account, brief, owner } = subject();
+        const template = await source.startListingCreator({ sellerAccountId: account.id, memberId: owner.id, brief });
+        const steps = template.steps!.map((step) => ({ ...step, id: step.id.replace(template.id, runId) }));
+        const calls = template.llmCalls!.map((call) => ({ ...call, id: call.id.replace(template.id, runId), stepId: call.stepId!.replace(template.id, runId) }));
+        return { steps, calls };
+      };
+      const stepsFor = async (source: DataSource, runId: string) => (await workFor(source, runId)).steps;
+      const at = "2026-10-31T09:30:00.000Z";
+      const accepted: ListingSubmission = {
+        sku: "NL-0001",
+        marketplaceId: "ATVPDKIKX0DER",
+        submissionId: "f1dc2914-75dd-11ea-bc55-0242ac130003",
+        status: "accepted",
+        issues: [],
+        submittedAt: at,
+        updatedAt: at,
+      };
+      const filedListing = async (source: DataSource, runId: string) => {
+        const { account, owner } = subject();
+        const run = await source.startNewListingRun({ runId, sellerAccountId: account.id, memberId: owner.id, productType: "BOTTLE" });
+        await source.appendAgentRunSteps({ runId: run.id, steps: await stepsFor(source, run.id) });
+        const { proposal } = await source.completeAgentRun(run.id);
+        return proposal!;
+      };
+      const approvedListing = async (source: DataSource, runId = "run_nl_approved") =>
+        source.approveProposal({ proposalId: (await filedListing(source, runId)).id, memberId: subject().owner.id });
+
+      it("starts an empty run for a member's request, once, and refuses those who can't run agents", async () => {
+        const { source } = await setup();
+        const { merchant, account, owner, viewer } = subject();
+        const input = { runId: "run_nl_0001", sellerAccountId: account.id, memberId: owner.id, productType: "LUGGAGE" };
+        const run = await source.startNewListingRun(input);
+
+        expect(run).toMatchObject({ id: "run_nl_0001", agent: "listing_creator", status: "running", steps: [], proposalIds: [] });
+        expect(await source.startNewListingRun(input)).toEqual(run);
+        const events = await source.listAuditEvents({ workspaceId: merchant.id, limit: 2 });
+        expect(events.filter((event) => event.entity.id === run.id).map((event) => event.action)).toEqual(["agent_run.started"]);
+        expect(events[0]).toMatchObject({ metadata: { requestedBy: owner.id, productType: "LUGGAGE" } });
+
+        await expect(source.startNewListingRun({ ...input, runId: "run_nl_0002", memberId: viewer.id })).rejects.toMatchObject({ code: "forbidden" });
+        await expect(source.startNewListingRun({ ...input, runId: "run_nl_0003", sellerAccountId: "nope" })).rejects.toMatchObject({ code: "not_found" });
+      });
+
+      it("appends steps as the workflow takes them, once each, then files the draft like any listing creator run", async () => {
+        const { source } = await setup();
+        const { account, owner } = subject();
+        const run = await source.startNewListingRun({ runId: "run_nl_0001", sellerAccountId: account.id, memberId: owner.id, productType: "BOTTLE" });
+        const { steps, calls } = await workFor(source, run.id);
+        const group = (from: number, to: number) => {
+          const ids = new Set(steps.slice(from, to).map((step) => step.id));
+          return { runId: run.id, steps: steps.slice(from, to), llmCalls: calls.filter((call) => ids.has(call.stepId!)) };
+        };
+
+        // Steps go in with the model calls made for them, in one write.
+        const first = await source.appendAgentRunSteps(group(0, 2));
+        expect(first.steps).toEqual(steps.slice(0, 2));
+        expect(first.llmCalls).toEqual(group(0, 2).llmCalls);
+        expect(group(0, 2).llmCalls).not.toEqual([]);
+        // A retried workflow step appends what it appended before: neither the steps nor their calls double.
+        expect(await source.appendAgentRunSteps(group(0, 2))).toEqual(first);
+        const all = await source.appendAgentRunSteps(group(2, steps.length));
+        expect(all.steps).toEqual(steps);
+        expect(all.llmCalls).toEqual(calls);
+        expect(await source.getAgentRun(run.id)).toEqual(all);
+        await expect(source.appendAgentRunSteps({ runId: run.id, steps: [{ ...steps[0]!, id: `${run.id}_other` }], llmCalls: [{ ...calls[0]!, stepId: "not_a_step" }] })).rejects.toMatchObject({
+          code: "invalid_input",
+        });
+
+        const { run: finished, proposal } = await source.completeAgentRun(run.id);
+        expect(finished).toMatchObject({ status: "succeeded", proposalIds: [proposal!.id] });
+        expect(proposal).toMatchObject({ type: "new_listing", status: "pending_approval", createdBy: { agentRunId: run.id } });
+        await expect(source.appendAgentRunSteps({ runId: run.id, steps: [{ ...steps[0]!, id: `${run.id}_late` }] })).rejects.toMatchObject({ code: "conflict" });
+      });
+
+      it("stops a run with a reason a member can read", async () => {
+        const { source } = await setup();
+        const { merchant, account, owner } = subject();
+        const run = await source.startNewListingRun({ runId: "run_nl_0001", sellerAccountId: account.id, memberId: owner.id, productType: "BOTTLE" });
+        const reason = "Amazon restricts this ASIN: You need approval to list in this brand.";
+        const failed = await source.failAgentRun({ runId: run.id, error: reason });
+
+        expect(failed).toMatchObject({ status: "failed", error: reason, summary: reason, finishedAt: "2026-10-31T09:00:00.000Z", proposalIds: [] });
+        expect(await source.getAgentRun(run.id)).toEqual(failed);
+        expect(await source.failAgentRun({ runId: run.id, error: "again" })).toEqual(failed);
+        const [event] = await source.listAuditEvents({ workspaceId: merchant.id, limit: 1 });
+        expect(event).toMatchObject({ action: "agent_run.finished", entity: { id: run.id }, metadata: { status: "failed" } });
+        await expect(source.failAgentRun({ runId: "nope", error: reason })).rejects.toMatchObject({ code: "not_found" });
+      });
+
+      it("publishes an approved new listing Amazon accepted, then keeps its submission up to date", async () => {
+        const { source, advanceHours } = await setup();
+        const { merchant } = subject();
+        const approved = await approvedListing(source);
+
+        expect(await source.findProposalByListingSku(accepted.sku)).toBeUndefined();
+        const published = await source.recordListingSubmission({ proposalId: approved.id, submission: accepted });
+        expect(published).toMatchObject({ status: "applied", appliedAt: at, listingSubmission: accepted });
+        expect(await source.getProposal(approved.id)).toEqual(published);
+        // Amazon's notifications name the listing by SKU.
+        expect(await source.findProposalByListingSku(accepted.sku)).toEqual(published);
+        const [applied] = await source.listAuditEvents({ workspaceId: merchant.id, limit: 1 });
+        expect(applied).toMatchObject({ action: "proposal.applied", actor: { type: "system" }, metadata: { sku: "NL-0001", status: "accepted" } });
+
+        advanceHours(2);
+        const later = "2026-10-31T11:00:00.000Z";
+        const issues = [{ code: "90220", message: "The capacity is required but not supplied.", severity: "ERROR" as const, attributeNames: ["capacity"] }];
+        const flagged = await source.recordListingSubmission({ proposalId: approved.id, submission: { ...accepted, status: "has_issues", issues, updatedAt: later } });
+        expect(flagged).toMatchObject({ status: "applied", appliedAt: at, listingSubmission: { status: "has_issues", issues, submittedAt: at, updatedAt: later } });
+        const [updated] = await source.listAuditEvents({ workspaceId: merchant.id, limit: 1 });
+        expect(updated).toMatchObject({ action: "proposal.listing_updated", metadata: { status: "has_issues", issues: 1 } });
+
+        // Amazon saying the same thing again records nothing.
+        const again = { ...flagged.listingSubmission!, updatedAt: "2026-10-31T12:00:00.000Z" };
+        expect(await source.recordListingSubmission({ proposalId: approved.id, submission: again })).toEqual(flagged);
+        expect(await source.listAuditEvents({ workspaceId: merchant.id, limit: 1 })).toEqual([updated]);
+
+        const live = await source.recordListingSubmission({
+          proposalId: approved.id,
+          submission: { ...accepted, status: "live", asin: "B0TESTASIN", updatedAt: "2026-10-31T13:00:00.000Z" },
+        });
+        expect(live.listingSubmission).toMatchObject({ status: "live", asin: "B0TESTASIN", issues: [] });
+        await expect(source.recordListingSubmission({ proposalId: approved.id, submission: { ...accepted, sku: "NL-OTHER" } })).rejects.toMatchObject({
+          code: "invalid_input",
+        });
+      });
+
+      it("fails an approved new listing Amazon refused, and refuses anything not approved or not a new listing", async () => {
+        const { source } = await setup();
+        const approved = await approvedListing(source);
+        const issues = [{ code: "90000900", message: "The attributes are invalid.", severity: "ERROR" as const }];
+        const failed = await source.recordListingSubmission({ proposalId: approved.id, submission: { ...accepted, status: "invalid", issues } });
+        expect(failed).toMatchObject({ status: "failed", listingSubmission: { status: "invalid", issues } });
+        expect(failed.appliedAt).toBeUndefined();
+        expect(await source.getProposal(approved.id)).toEqual(failed);
+
+        // A listing that never reached Amazon fails too, with no submission id of Amazon's.
+        const unsent = await approvedListing(source, "run_nl_unsent");
+        const notSent: ListingSubmission = { ...accepted, status: "invalid", issues: [{ code: "NOT_SUBMITTED", message: "Amazon kept refusing the request.", severity: "ERROR" }] };
+        delete notSent.submissionId;
+        expect(await source.recordListingSubmission({ proposalId: unsent.id, submission: notSent })).toMatchObject({ status: "failed", listingSubmission: notSent });
+
+        const listingUpdate = pendingOf("listing_update").proposal;
+        await expect(source.recordListingSubmission({ proposalId: listingUpdate.id, submission: accepted })).rejects.toMatchObject({ code: "invalid_input" });
+        const pending = await filedListing(source, "run_nl_pending");
+        await expect(source.recordListingSubmission({ proposalId: pending.id, submission: accepted })).rejects.toMatchObject({ code: "invalid_transition" });
+        await expect(source.recordListingSubmission({ proposalId: "nope", submission: accepted })).rejects.toMatchObject({ code: "not_found" });
       });
     });
   });

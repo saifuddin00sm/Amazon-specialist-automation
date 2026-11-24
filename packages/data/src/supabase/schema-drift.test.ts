@@ -22,7 +22,7 @@ import {
   WorkspaceKindSchema,
   allowedStatusChanges,
 } from "@app/core";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { Constants } from "./database.types";
 
@@ -59,7 +59,13 @@ describe("database schema", () => {
   });
 
   it("allows the proposal status changes packages/core allows", () => {
-    const migration = readFileSync(new URL("../../../../supabase/migrations/20261101000014_proposal_transitions.sql", import.meta.url), "utf8");
+    // The newest migration that defines the trigger function is the one in force.
+    const migrations = new URL("../../../../supabase/migrations/", import.meta.url);
+    const migration = readdirSync(migrations)
+      .sort()
+      .map((name) => readFileSync(new URL(name, migrations), "utf8"))
+      .filter((sql) => sql.includes("function private.check_proposal_transition()"))
+      .at(-1)!;
     const trigger = migration.slice(migration.indexOf("not in ("), migration.indexOf(") then"));
     const pairs = [...trigger.matchAll(/\('(\w+)', '(\w+)'\)/g)].map(([, from, to]) => [from, to]);
     expect(pairs).toEqual(allowedStatusChanges());

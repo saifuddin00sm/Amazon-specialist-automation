@@ -18,10 +18,13 @@ import { completeCampaignOptimizerRun, startCampaignOptimizerRun, type CampaignR
 import { completeCampaignStrategistRun, startCampaignStrategistRun, type StrategistStore } from "../agents/campaign-strategist";
 import { completeListingCreatorRun, startListingCreatorRun, type ListingCreatorStore } from "../agents/listing-creator";
 import { LLM_CALLS_BACKEND_ONLY, withLlmCalls } from "../agents/model-calls";
+import { WORKFLOW_RUNS_BACKEND_ONLY, failedRun, startNewListingWorkflowRun, withSteps } from "../agents/workflow-runs";
 import { productTypeDefinition, searchProductTypeCatalog } from "../mock/product-types";
 import {
+  LISTING_SUBMISSIONS_BACKEND_ONLY,
   ProposalWriteError,
   approveProposalWrite,
+  listingSubmissionWrite,
   publishProposalWrite,
   rejectProposalWrite,
   snoozeProposalWrite,
@@ -93,6 +96,8 @@ export class SupabaseDataError extends Error {
 /** PostgREST returns at most this many rows per request (config.toml `max_rows`); lists page through. */
 const PAGE_SIZE = 1000;
 const UNIQUE_VIOLATION = "23505";
+/** Tries at recording a listing submission while the proposal changes underneath. */
+const SUBMISSION_ATTEMPTS = 3;
 
 type Result<T> = { data: T; error: PostgrestError | null };
 
@@ -687,6 +692,60 @@ export function createSupabaseDataSource(
       // The run finished between the read and the write.
       if (!appended) throw new AgentRunError("conflict", "That agent run has finished; its model calls are final.");
       return run;
+    },
+    async startNewListingRun({ runId, sellerAccountId, memberId, productType }) {
+      if (userId !== undefined) throw new AgentRunError("forbidden", WORKFLOW_RUNS_BACKEND_ONLY);
+      const existing = await getAgentRun(runId);
+      if (existing) return existing;
+      const { run, events } = startNewListingWorkflowRun(await listingCreatorStore(sellerAccountId, memberId), {
+        runId,
+        sellerAccountId,
+        memberId,
+        productType,
+        at: now(),
+      });
+      const { error } = await db.rpc("start_agent_run", { p_run: agentRunToRow(run), p_events: withIds(events) });
+      // A retried start that raced the first one.
+      if (error?.code === UNIQUE_VIOLATION) return (await getAgentRun(runId)) ?? run;
+      must({ data: null, error });
+      return run;
+    },
+    async appendAgentRunSteps({ runId, steps, llmCalls }) {
+      if (userId !== undefined) throw new AgentRunError("forbidden", WORKFLOW_RUNS_BACKEND_ONLY);
+      const { run, added, calls } = withSteps(await getAgentRun(runId), steps, llmCalls);
+      if (added.length === 0) return run;
+      const appended = must(await db.rpc("append_agent_run_steps", { p_run_id: runId, p_steps: added as Json, p_calls: calls as Json }));
+      // The run finished between the read and the write.
+      if (!appended) throw new AgentRunError("conflict", "That agent run has finished; its steps are final.");
+      return run;
+    },
+    async failAgentRun({ runId, error }) {
+      if (userId !== undefined) throw new AgentRunError("forbidden", WORKFLOW_RUNS_BACKEND_ONLY);
+      const before = await getAgentRun(runId);
+      const { run, events } = failedRun(before, { error, at: now().toISOString() });
+      if (run === before) return run;
+      const finished = must(await db.rpc("finish_agent_run", { p_run: agentRunToRow(run), p_events: withIds(events) }));
+      // It finished another way meanwhile; that one stands.
+      return finished ? run : ((await getAgentRun(runId)) ?? run);
+    },
+    async recordListingSubmission({ proposalId, submission }) {
+      if (userId !== undefined) throw new ProposalWriteError("forbidden", LISTING_SUBMISSIONS_BACKEND_ONLY);
+      // The proposal can change between the read and the write; then the write is worked out again
+      // from what it is now, which also gives the right refusal when it no longer applies.
+      for (let attempt = 1; attempt <= SUBMISSION_ATTEMPTS; attempt += 1) {
+        const proposal = await getProposal(proposalId);
+        const result = listingSubmissionWrite({ proposal, at: now().toISOString() }, submission);
+        if (!result) return proposal!;
+        const saved = must(
+          await db.rpc("save_listing_submission", { p_proposal: proposalToRow(result.proposal), p_from: result.from, p_events: withIds(result.events) }),
+        );
+        if (saved) return result.proposal;
+      }
+      throw new SupabaseDataError("conflict", "The proposal kept changing while its submission was recorded.");
+    },
+    async findProposalByListingSku(sku) {
+      const row = must(await db.from("proposals").select().eq("type", "new_listing").eq("listing_submission->>sku", sku).maybeSingle());
+      return row ? proposalFromRow(row) : undefined;
     },
     async completeAgentRun(runId) {
       const run = await getAgentRun(runId);

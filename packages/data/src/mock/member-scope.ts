@@ -1,8 +1,9 @@
 import { canSeeAccount, seesWholeWorkspace, type Member, type SellerAccount } from "@app/core";
 import { LLM_CALLS_BACKEND_ONLY } from "../agents/model-calls";
+import { WORKFLOW_RUNS_BACKEND_ONLY } from "../agents/workflow-runs";
 import { CATALOG_SYNC_ONLY, CatalogSyncError } from "../catalog-sync";
 import { AgentRunError, type DataSource } from "../data-source";
-import { ProposalWriteError } from "../proposal-writes";
+import { LISTING_SUBMISSIONS_BACKEND_ONLY, ProposalWriteError } from "../proposal-writes";
 import { SettingsWriteError } from "../settings-writes";
 
 /** Which seller account a record belongs to, from the mock's own arrays. */
@@ -209,6 +210,23 @@ export function scopeToMember(source: DataSource, member: Member, accountOf: Acc
     // Model calls are logged by the backend's LLM gateway, never as a member.
     async recordLlmCalls() {
       throw new AgentRunError("forbidden", LLM_CALLS_BACKEND_ONLY);
+    },
+    // Workflow runs and what Amazon says about submissions are recorded by the backend alone.
+    async startNewListingRun() {
+      throw new AgentRunError("forbidden", WORKFLOW_RUNS_BACKEND_ONLY);
+    },
+    async appendAgentRunSteps() {
+      throw new AgentRunError("forbidden", WORKFLOW_RUNS_BACKEND_ONLY);
+    },
+    async failAgentRun() {
+      throw new AgentRunError("forbidden", WORKFLOW_RUNS_BACKEND_ONLY);
+    },
+    async recordListingSubmission() {
+      throw new ProposalWriteError("forbidden", LISTING_SUBMISSIONS_BACKEND_ONLY);
+    },
+    async findProposalByListingSku(sku) {
+      const proposal = await source.findProposalByListingSku(sku);
+      return proposal && sees(proposal.sellerAccountId) ? proposal : undefined;
     },
     async listAuditEvents({ limit, ...query }) {
       const events = await source.listAuditEvents(query);

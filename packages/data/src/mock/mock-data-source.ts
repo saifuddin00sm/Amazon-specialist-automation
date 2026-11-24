@@ -15,6 +15,7 @@ import { completeCampaignStrategistRun, startCampaignStrategistRun, type Strateg
 import { completeListingCreatorRun, startListingCreatorRun, type ListingCreatorStore } from "../agents/listing-creator";
 import {
   approveProposalWrite,
+  listingSubmissionWrite,
   publishProposalWrite,
   rejectProposalWrite,
   snoozeProposalWrite,
@@ -32,6 +33,7 @@ import {
 } from "../settings-writes";
 import { completeListingOptimizerRun, startListingOptimizerRun } from "../agents/agent-runs";
 import { withLlmCalls } from "../agents/model-calls";
+import { failedRun, startNewListingWorkflowRun, withSteps } from "../agents/workflow-runs";
 import { randomSellerId } from "../seller-id";
 import { scopeToMember, type AccountLookups } from "./member-scope";
 import { productTypeDefinition, searchProductTypeCatalog } from "./product-types";
@@ -492,6 +494,39 @@ export function createMockDataSource(dataset: MockDataset, { now = () => new Dat
       const run = withLlmCalls(byId(agentRuns, runId), calls);
       agentRuns[agentRuns.findIndex((candidate) => candidate.id === runId)] = deepFreeze(run);
       return run;
+    },
+    async startNewListingRun({ runId, sellerAccountId, memberId, productType }) {
+      const existing = byId(agentRuns, runId);
+      if (existing) return existing;
+      const { run, events } = startNewListingWorkflowRun(listingCreatorStore(sellerAccountId), { runId, sellerAccountId, memberId, productType, at: now() });
+      agentRuns.unshift(deepFreeze(run));
+      appendAudit(events);
+      return run;
+    },
+    async appendAgentRunSteps({ runId, steps, llmCalls }) {
+      const { run, added } = withSteps(byId(agentRuns, runId), steps, llmCalls);
+      if (added.length > 0) agentRuns[agentRuns.findIndex((candidate) => candidate.id === runId)] = deepFreeze(run);
+      return run;
+    },
+    async failAgentRun({ runId, error }) {
+      const before = byId(agentRuns, runId);
+      const { run, events } = failedRun(before, { error, at: now().toISOString() });
+      if (run !== before) {
+        agentRuns[agentRuns.findIndex((candidate) => candidate.id === runId)] = deepFreeze(run);
+        appendAudit(events);
+      }
+      return run;
+    },
+    async recordListingSubmission({ proposalId, submission }) {
+      const proposal = byId(proposals, proposalId);
+      const result = listingSubmissionWrite({ proposal, at: now().toISOString() }, submission);
+      if (!result) return proposal!;
+      replace(proposals, result.proposal);
+      appendAudit(result.events);
+      return result.proposal;
+    },
+    async findProposalByListingSku(sku) {
+      return proposals.find((proposal) => proposal.listingSubmission?.sku === sku);
     },
     async completeAgentRun(runId) {
       const run = byId(agentRuns, runId);

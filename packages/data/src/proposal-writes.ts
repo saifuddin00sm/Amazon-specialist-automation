@@ -1,18 +1,22 @@
 import {
   DECISION_NOTE_MAX_LENGTH,
   EDITABLE_PROPOSAL_TYPES,
+  ListingSubmissionSchema,
   PROPOSAL_TRANSITIONS,
   ProposalSchema,
   applyDiffEdits,
   canDecideProposal,
   hasBlockingFailure,
+  submissionChanged,
   transitionRefusal,
   type AuditEvent,
   type ComplianceCheck,
   type DiffEdit,
   type DiffEntry,
+  type ListingSubmission,
   type Member,
   type Proposal,
+  type ProposalStatus,
   type ProposalTransition,
 } from "@app/core";
 
@@ -142,6 +146,53 @@ export function publishProposalWrite(ctx: ProposalWriteContext): ProposalWriteRe
   const actor = { type: "member" as const, memberId: member.id };
   const next = ProposalSchema.parse({ ...proposal, status: PROPOSAL_TRANSITIONS.publish.to, appliedAt: ctx.at });
   return { proposal: next, transition: "publish", events: [event(proposal, ctx.at, actor, "proposal.applied", { type: proposal.type })] };
+}
+
+export const LISTING_SUBMISSIONS_BACKEND_ONLY = "Only the backend records what Amazon says about a submitted listing.";
+
+/** A submission write, with the statuses the proposal must still be in for a backend to commit it. */
+export type ListingSubmissionWriteResult = { proposal: Proposal; from: ProposalStatus[]; events: AuditEventDraft[] };
+
+/**
+ * Records Amazon's word on a new listing. The first answer to an approved proposal's submission
+ * publishes it (accepted) or fails it (invalid), through the state machine; later ones, from listing
+ * notifications, update the submission of the same SKU and change nothing else. Returns undefined
+ * when Amazon said nothing new. The system acts: no member is involved.
+ */
+export function listingSubmissionWrite(
+  { proposal, at }: Pick<ProposalWriteContext, "proposal" | "at">,
+  submission: ListingSubmission,
+): ListingSubmissionWriteResult | undefined {
+  if (!proposal) throw new ProposalWriteError("not_found", "That proposal no longer exists.");
+  if (proposal.type !== "new_listing") throw new ProposalWriteError("invalid_input", "Only new listings are submitted to Amazon.");
+  const parsed = ListingSubmissionSchema.safeParse(submission);
+  if (!parsed.success) throw new ProposalWriteError("invalid_input", "That isn't a listing submission.");
+  const next = parsed.data;
+  const system = { type: "system" as const };
+  const metadata = { sku: next.sku, ...(next.submissionId ? { submissionId: next.submissionId } : {}), status: next.status, issues: next.issues.length };
+
+  const current = proposal.listingSubmission;
+  if (current) {
+    if (current.sku !== next.sku || current.submissionId !== next.submissionId) {
+      throw new ProposalWriteError("invalid_input", "That submission isn't this proposal's.");
+    }
+    if (!submissionChanged(current, next)) return undefined;
+    const updated = ProposalSchema.parse({ ...proposal, listingSubmission: { ...next, submittedAt: current.submittedAt } });
+    return { proposal: updated, from: [proposal.status], events: [event(proposal, at, system, "proposal.listing_updated", metadata)] };
+  }
+
+  const transition: ProposalTransition = next.status === "invalid" ? "fail" : "publish";
+  const refusal = transitionRefusal(proposal.status, transition);
+  if (refusal) throw new ProposalWriteError("invalid_transition", refusal);
+  const to = PROPOSAL_TRANSITIONS[transition].to;
+  const recorded = ProposalSchema.parse({
+    ...proposal,
+    status: to,
+    ...(to === "applied" ? { appliedAt: next.submittedAt } : {}),
+    listingSubmission: next,
+  });
+  const action = to === "applied" ? "proposal.applied" : "proposal.failed";
+  return { proposal: recorded, from: [...PROPOSAL_TRANSITIONS[transition].from], events: [event(proposal, at, system, action, { type: proposal.type, ...metadata })] };
 }
 
 function assertCanTransition(ctx: ProposalWriteContext, transition: ProposalTransition): { proposal: Proposal; member: Member } {

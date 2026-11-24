@@ -162,6 +162,26 @@ describe.skipIf(skip)("supabase DataSource as a signed-in member", () => {
     }
   });
 
+  it("keeps workflow runs and listing submissions to the secret key", async () => {
+    const owner = memberOf(merchant!.id, "owner");
+    const account = dataset.sellerAccounts.find((candidate) => candidate.workspaceId === merchant!.id)!;
+    const source = await signedIn(owner.email);
+    await expect(source.startNewListingRun({ runId: "run_x", sellerAccountId: account.id, memberId: owner.id, productType: "LUGGAGE" })).rejects.toMatchObject({
+      code: "forbidden",
+    });
+    await expect(source.appendAgentRunSteps({ runId: "run_x", steps: [] })).rejects.toMatchObject({ code: "forbidden" });
+    await expect(source.failAgentRun({ runId: "run_x", error: "stop" })).rejects.toMatchObject({ code: "forbidden" });
+
+    // Past the app's own check, the database refuses too: the functions and the column are the secret key's.
+    const { client } = await signInAs(env!, admin, owner.email);
+    expect((await client.rpc("append_agent_run_steps", { p_run_id: "run_x", p_steps: [] })).error).not.toBeNull();
+    expect((await client.rpc("save_listing_submission", { p_proposal: {}, p_from: ["approved"], p_events: [] })).error).not.toBeNull();
+    const proposal = dataset.proposals.find((candidate) => candidate.workspaceId === merchant!.id && candidate.status === "pending_approval")!;
+    const { error } = await client.from("proposals").update({ listing_submission: { status: "live" } }).eq("id", proposal.id);
+    expect(error).not.toBeNull();
+    expect((await admin.from("proposals").select("listing_submission").eq("id", proposal.id).single()).data?.listing_submission).toBeNull();
+  });
+
   it("lets a client approver plan a campaign on their own account and approve the plan through row-level security", async () => {
     const approver = dataset.members.find((member) => member.role === "client_approver")!;
     const campaign = dataset.campaigns.find(

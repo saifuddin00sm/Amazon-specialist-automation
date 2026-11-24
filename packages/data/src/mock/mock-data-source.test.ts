@@ -41,4 +41,26 @@ describe("mockDataSource", () => {
       asOwner.finishCatalogSync({ sellerAccountId: account.id, syncedAt, counts: { created: 0, updated: 0, unchanged: 0, newVersions: 0 }, skipped: {} }),
     ).rejects.toMatchObject({ code: "forbidden" });
   });
+
+  it("keeps workflow runs and listing submissions from members", async () => {
+    const owner = dataset.members.find((member) => member.role === "owner")!;
+    const account = dataset.sellerAccounts.find((candidate) => candidate.workspaceId === owner.workspaceId)!;
+    const asOwner = createMockDataSource(dataset).asMember(owner.id)!;
+    await expect(asOwner.startNewListingRun({ runId: "run_x", sellerAccountId: account.id, memberId: owner.id, productType: "LUGGAGE" })).rejects.toMatchObject({
+      code: "forbidden",
+    });
+    await expect(asOwner.appendAgentRunSteps({ runId: "run_x", steps: [] })).rejects.toMatchObject({ code: "forbidden" });
+    await expect(asOwner.failAgentRun({ runId: "run_x", error: "stop" })).rejects.toMatchObject({ code: "forbidden" });
+    const proposal = dataset.proposals[0]!;
+    const submission = {
+      sku: "NL-1",
+      marketplaceId: "ATVPDKIKX0DER",
+      submissionId: "s-1",
+      status: "accepted" as const,
+      issues: [],
+      submittedAt: "2026-10-31T09:00:00.000Z",
+      updatedAt: "2026-10-31T09:00:00.000Z",
+    };
+    await expect(asOwner.recordListingSubmission({ proposalId: proposal.id, submission })).rejects.toMatchObject({ code: "forbidden" });
+  });
 });

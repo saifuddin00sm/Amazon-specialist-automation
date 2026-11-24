@@ -1,12 +1,14 @@
 import type {
   AdGroup,
   AgentRun,
+  AgentRunStep,
   AuditEvent,
   Branding,
   Campaign,
   CampaignBrief,
   DiffEdit,
   ImportedListing,
+  ListingSubmission,
   ListingVersion,
   LlmCall,
   Marketplace,
@@ -96,6 +98,20 @@ export type StartCampaignStrategistInput = { sellerAccountId: string; memberId: 
 export type StartListingCreatorInput = { sellerAccountId: string; memberId: string; brief: NewListingBrief };
 
 export type RecordLlmCallsInput = { runId: string; calls: LlmCall[] };
+
+/**
+ * A New listing request the newListing workflow drafts. `runId` comes from the workflow, so a retried
+ * start finds the run it already made; `memberId` asked for it.
+ */
+export type StartNewListingRunInput = { runId: string; sellerAccountId: string; memberId: string; productType: string };
+
+/** `llmCalls` are the model calls made for these steps, logged with them in one write. */
+export type AppendAgentRunStepsInput = { runId: string; steps: AgentRunStep[]; llmCalls?: LlmCall[] };
+
+/** `error` says why the run stopped, in words a member can read. */
+export type FailAgentRunInput = { runId: string; error: string };
+
+export type RecordListingSubmissionInput = { proposalId: string; submission: ListingSubmission };
 
 /** Amazon product types in one marketplace; no keywords lists them all. */
 export type ProductTypeQuery = { marketplace: Marketplace; keywords?: string };
@@ -283,6 +299,29 @@ export interface DataSource {
    * when the run doesn't exist, has finished, or a call names a step the run doesn't have.
    */
   recordLlmCalls(input: RecordLlmCallsInput): Promise<AgentRun>;
+  /**
+   * Starts the listing creator run the newListing workflow drives, with no steps yet, for a member
+   * who may run agents on the account. Backend only: members are refused with AgentRunError
+   * forbidden. Returns the run already started when `runId` exists. Writes agent_run.started.
+   */
+  startNewListingRun(input: StartNewListingRunInput): Promise<AgentRun>;
+  /**
+   * Appends steps to a running run as its workflow takes them, with the model calls made for them,
+   * in one write. Steps it has, by id, are skipped, and their calls with them. The run is filed with
+   * completeAgentRun. Backend only. Throws AgentRunError for a finished run.
+   */
+  appendAgentRunSteps(input: AppendAgentRunStepsInput): Promise<AgentRun>;
+  /** Stops a running run with a reason, filing nothing. A finished run comes back as it is. Backend only. */
+  failAgentRun(input: FailAgentRunInput): Promise<AgentRun>;
+  /**
+   * Records what Amazon said about an approved new listing's submission. Its first answer publishes
+   * the proposal (accepted) or fails it (invalid); later ones update the submission. Backend only:
+   * members are refused with ProposalWriteError forbidden. Writes proposal.applied, proposal.failed
+   * or proposal.listing_updated; nothing when Amazon said nothing new.
+   */
+  recordListingSubmission(input: RecordListingSubmissionInput): Promise<Proposal>;
+  /** The new listing submitted under `sku`, if any. Amazon's notifications name listings by SKU. */
+  findProposalByListingSku(sku: string): Promise<Proposal | undefined>;
   /** Newest first. */
   listAuditEvents(query: ActivityQuery): Promise<AuditEvent[]>;
 }

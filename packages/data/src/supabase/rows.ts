@@ -403,6 +403,7 @@ export const proposalToRow = (proposal: Proposal): TablesInsert<"proposals"> => 
   decided_at: proposal.decidedAt ?? null,
   decision_note: proposal.decisionNote ?? null,
   applied_at: proposal.appliedAt ?? null,
+  listing_submission: proposal.listingSubmission ? json(proposal.listingSubmission) : null,
 });
 
 export const proposalFromRow = (row: Tables<"proposals">): Proposal =>
@@ -429,6 +430,7 @@ export const proposalFromRow = (row: Tables<"proposals">): Proposal =>
       decidedAt: isoOrUndefined(row.decided_at),
       decisionNote: orUndefined(row.decision_note),
       appliedAt: isoOrUndefined(row.applied_at),
+      listingSubmission: orUndefined(row.listing_submission),
     }),
   );
 
