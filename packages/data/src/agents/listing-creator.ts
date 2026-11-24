@@ -1,22 +1,29 @@
 import {
   AgentRunSchema,
+  EMPTY_LISTING_COPY,
   LISTING_COPY_ATTRIBUTES,
   LISTING_LIMITS,
   NewListingBriefSchema,
   ProposalSchema,
   RubricCriterionSchema,
+  attributeLabels,
   autonomyFor,
   canActOnAccount,
+  checkLine,
   checkProposalCompliance,
   formatDimensions,
   newListingBriefProblem,
   newListingDiff,
+  newListingFactSheet,
   newListingName,
   newListingPath,
   overallScore,
   parseNewListing,
   planNewListingAttributes,
+  uncertifiedClaims,
   utf8ByteLength,
+  writerAttributeInput,
+  writerAttributes,
   type Actor,
   type AgentRun,
   type AgentRunStep,
@@ -38,6 +45,7 @@ import {
 import { PROMPTS } from "@app/llm";
 import { AgentRunError } from "../data-source";
 import { assertAgentsRunning, fileWithAutonomy, finalStep } from "./autonomy";
+import { standInDraft } from "./listing-optimizer";
 import { scripted, scriptedLlmCalls } from "./model-calls";
 
 /** What a listing creator run reads about one seller account. */
@@ -156,7 +164,7 @@ export function startListingCreatorRun(
       ...timed(3),
       kind: "compliance_check",
       title: "Compliance check",
-      text: [`Running ${checks.length} guardrail checks on the draft.`, ...checks.map((check) => `${CHECK_MARK[check.status]} ${check.label}${check.detail ? ` – ${check.detail}` : ""}`)].join(
+      text: [`Running ${checks.length} guardrail checks on the draft.`, ...checks.map(checkLine)].join(
         "\n",
       ),
       checks,
@@ -198,7 +206,19 @@ export function startListingCreatorRun(
     proposalIds: [],
     steps,
     llmCalls: scriptedLlmCalls(steps, (step) => {
-      if (step.kind === "draft") return scripted(PROMPTS.listingCreate, { productType: productType.name, facts: brief.facts, attributes: brief.attributes }, step.listing);
+      if (step.kind === "draft") {
+        const sheet = newListingFactSheet(brief, attributeLabels(productType));
+        const input = {
+          productType: productType.name,
+          limits: { ...LISTING_LIMITS },
+          facts: sheet,
+          prohibitedClaims: uncertifiedClaims(brief.facts.certifications),
+          attributes: writerAttributes(plan).map(writerAttributeInput),
+          findings: [],
+        };
+        // The stand-in's other attributes are logged as the listing creator's own call, below.
+        return scripted(PROMPTS.listingCreate, input, { ...standInDraft(EMPTY_LISTING_COPY, step.listing, sheet), attributes: [], missingFacts: [] });
+      }
       if (step.kind === "plan" && step.changes.length > 0 && step.title === "Draft attributes") {
         const attributes = plan
           .filter(({ status }) => status === "agent")
@@ -398,7 +418,6 @@ function reviewDraft(copy: ListingCopy, plan: AttributePlan[], checks: Complianc
   };
 }
 
-const CHECK_MARK: Record<ComplianceCheck["status"], string> = { pass: "✓", warn: "!", fail: "✗" };
 const STOP_WORDS = new Set(["and", "for", "the", "with", "other", "from", "made"]);
 
 function isYesNo(options: readonly string[] | undefined): boolean {
