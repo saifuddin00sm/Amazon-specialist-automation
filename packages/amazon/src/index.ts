@@ -3,6 +3,7 @@ export { createSpApiClient, type SpApiClient } from "./client";
 export {
   LWA_TOKEN_URL,
   MARKETPLACE_IDS,
+  MARKETPLACE_LANGUAGES,
   MARKETPLACE_REGIONS,
   amazonEnvironment,
   spApiEndpoint,
@@ -10,7 +11,9 @@ export {
   type SpApiRegion,
 } from "./endpoints";
 export { consoleLogger, type AmazonLogger, type AmazonRequestLog, type Fetch } from "./http";
+export * from "./listing-submissions";
 export * from "./listings-items";
+export * from "./listings-restrictions";
 export {
   LwaError,
   createAccessTokenProvider,
@@ -22,6 +25,7 @@ export {
   type LwaOptions,
 } from "./lwa";
 export * from "./product-type-definitions";
+export * from "./product-type-schema";
 export {
   DEFAULT_RETRY,
   TokenBucket,

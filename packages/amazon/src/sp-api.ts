@@ -31,7 +31,7 @@ export type SpApiCall<T> = {
   rateLimit: RateLimit;
   /** Whose access token signs the call, and whose bucket it draws from. */
   sellerId: string;
-  method: "GET" | "PATCH";
+  method: "GET" | "PATCH" | "PUT";
   path: string;
   query?: Record<string, QueryValue>;
   body?: unknown;

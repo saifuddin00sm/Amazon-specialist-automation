@@ -6,7 +6,7 @@ import { ProposalNotApprovedError } from "./listings-items";
 import { createAccessTokenProvider } from "./lwa";
 import { createMemoryRefreshTokenStore, createRefreshTokenVault } from "./refresh-tokens";
 import { SpApiError } from "./sp-api";
-import { fakeAmazon, fakeClock, json, recordingLogger, type RecordedRequest } from "./test-support";
+import { fakeAmazon, fakeClock, json, recordingLogger, sandboxExamples, type RecordedRequest } from "./test-support";
 import { generateEncryptionKey, parseEncryptionKey } from "./token-crypto";
 import { USER_AGENT } from "./user-agent";
 
@@ -17,25 +17,6 @@ const patchBody = {
   productType: "LUGGAGE",
   patches: [{ op: "replace" as const, path: "/attributes/item_name", value: [{ value: "Hardside Carry-On Spinner", marketplace_id: US }] }],
 };
-
-/** Answers with Amazon's own sandbox examples, by operation. */
-function sandboxExamples(request: RecordedRequest): Response {
-  const { pathname } = request.url;
-  if (pathname.startsWith("/listings/2021-08-01/items/")) {
-    const segments = pathname.split("/").length;
-    if (segments === 5) return json(200, sandbox.searchListingsItems_200_0);
-    if (request.method === "PATCH") {
-      const sku = decodeURIComponent(pathname.split("/").at(-1)!);
-      if (sku === "VALIDATION_VALID") return json(200, sandbox.patchListingsItem_200_1);
-      if (sku === "VALIDATION_INVALID") return json(200, sandbox.patchListingsItem_200_2);
-      return json(200, sandbox.patchListingsItem_200_0);
-    }
-    return json(200, sandbox.getListingsItem_200_0);
-  }
-  if (pathname === "/definitions/2020-09-01/productTypes") return json(200, sandbox.searchDefinitionsProductTypes_200_0);
-  if (pathname.startsWith("/definitions/2020-09-01/productTypes/")) return json(200, sandbox.getDefinitionsProductType_200_0);
-  return json(404, { errors: [{ code: "NotFound", message: "No such operation" }] });
-}
 
 async function setup(handler: (request: RecordedRequest) => Response = sandboxExamples, environment: AmazonEnvironment = "sandbox") {
   const amazon = fakeAmazon(handler);
@@ -199,5 +180,66 @@ describe("patchListingsItem", () => {
     expect(preview.status).toBe("INVALID");
     expect(preview.issues?.[0]?.attributeNames).toEqual(["fake_attribute"]);
     expect(amazon.spApiRequests()[0]!.url.searchParams.get("mode")).toBe("VALIDATION_PREVIEW");
+  });
+});
+
+describe("putListingsItem", () => {
+  const putBody = {
+    productType: "LUGGAGE",
+    requirements: "LISTING_PRODUCT_ONLY" as const,
+    attributes: { item_name: [{ value: "Hardside Carry-On Spinner", language_tag: "en_US", marketplace_id: US }] },
+  };
+
+  it("creates a listing for an approved proposal", async () => {
+    const { client, amazon } = await setup();
+    const submission = await client.putListingsItem({
+      sellerId,
+      sku: "NL-0001",
+      marketplaceIds: [US],
+      body: putBody,
+      proposal: { id: "proposal-1", status: "approved" },
+    });
+    expect(submission).toMatchObject({ status: "ACCEPTED", issues: [] });
+    const [put] = amazon.spApiRequests();
+    expect(put!.method).toBe("PUT");
+    expect(put!.url.pathname).toBe(`/listings/2021-08-01/items/${sellerId}/NL-0001`);
+    expect(put!.url.search).toBe(`?marketplaceIds=${US}`);
+    expect(JSON.parse(put!.body!)).toEqual(putBody);
+  });
+
+  it("refuses, without calling Amazon, unless the proposal is approved", async () => {
+    const { client, amazon } = await setup();
+    for (const status of ["pending_approval", "rejected", "applied", "failed", "superseded"] as const) {
+      const write = client.putListingsItem({ sellerId, sku: "NL-0001", marketplaceIds: [US], body: putBody, proposal: { id: "proposal-1", status } });
+      await expect(write).rejects.toThrow(ProposalNotApprovedError);
+    }
+    expect(amazon.requests).toEqual([]);
+  });
+
+  it("previews a listing with VALIDATION_PREVIEW without a proposal", async () => {
+    const { client, amazon } = await setup();
+    const preview = await client.putListingsItem({
+      sellerId,
+      sku: "VALIDATION_INVALID",
+      marketplaceIds: [US],
+      body: putBody,
+      mode: "VALIDATION_PREVIEW",
+      includedData: ["identifiers", "issues"],
+    });
+    expect(preview.status).toBe("INVALID");
+    expect(preview.issues?.map((issue) => issue.attributeNames)).toEqual([["condition_type"], ["fake_attribute"]]);
+    expect(amazon.spApiRequests()[0]!.url.searchParams.get("mode")).toBe("VALIDATION_PREVIEW");
+  });
+});
+
+describe("getListingsRestrictions", () => {
+  it("asks for one ASIN's restrictions in a condition and reads Amazon's sandbox example", async () => {
+    const { client, amazon, entries } = await setup();
+    const result = await client.getListingsRestrictions({ sellerId, asin: "B0000ASIN1", marketplaceIds: [US], conditionType: "new_new" });
+    expect(result.restrictions[0]).toMatchObject({ marketplaceId: US, conditionType: "used_acceptable" });
+    const [request] = amazon.spApiRequests();
+    expect(request!.url.pathname).toBe("/listings/2021-08-01/restrictions");
+    expect(request!.url.search).toBe(`?sellerId=${sellerId}&asin=B0000ASIN1&marketplaceIds=${US}&conditionType=new_new`);
+    expect(entries.at(-1)).toMatchObject({ operation: "getListingsRestrictions", userAgent: USER_AGENT });
   });
 });

@@ -540,5 +540,94 @@
         "details": "Invalid input"
       }
     ]
+  },
+  "putListingsItem_200_0": {
+    "sku": "GM-ZDPI-9B4E",
+    "status": "ACCEPTED",
+    "submissionId": "f1dc2914-75dd-11ea-bc55-0242ac130003",
+    "issues": []
+  },
+  "putListingsItem_200_1": {
+    "sku": "VALIDATION_VALID",
+    "status": "VALID",
+    "submissionId": "1edc94ea-a3d7-210b-42bc-0ec72c1384762",
+    "identifiers": [
+      {
+        "marketplaceId": "ATVPDKIKX0DER",
+        "asin": "B07N4M94X4"
+      }
+    ],
+    "issues": []
+  },
+  "putListingsItem_200_2": {
+    "sku": "VALIDATION_INVALID",
+    "status": "INVALID",
+    "submissionId": "a1c562c2-1695-11ee-be56-0242ac120002",
+    "identifiers": [],
+    "issues": [
+      {
+        "code": "90220",
+        "message": "'condition_type' is required but not supplied.",
+        "severity": "ERROR",
+        "attributeNames": [
+          "condition_type"
+        ],
+        "categories": [
+          "MISSING_ATTRIBUTE",
+          "LISTING"
+        ],
+        "enforcements": {
+          "actions": [
+            {
+              "action": "LISTING_SUPPRESSED"
+            }
+          ],
+          "exemption": {
+            "status": "NOT_EXEMPT"
+          }
+        }
+      },
+      {
+        "code": "90000900",
+        "message": "The attributes are invalid.",
+        "severity": "ERROR",
+        "attributeNames": [
+          "fake_attribute"
+        ],
+        "categories": [
+          "LISTING"
+        ]
+      }
+    ]
+  },
+  "putListingsItem_400_0": {
+    "errors": [
+      {
+        "code": "BAD_REQUEST",
+        "message": "Invalid input",
+        "details": "Invalid input"
+      }
+    ]
+  },
+  "getListingsRestrictions_200_0": {
+    "restrictions": [
+      {
+        "marketplaceId": "ATVPDKIKX0DER",
+        "conditionType": "used_acceptable",
+        "reasons": [
+          {
+            "message": "You cannot list the product in this condition.",
+            "links": [
+              {
+                "resource": "https://sellercentral.amazon.com/hz/approvalrequest/restrictions/approve?asin=B0000ASIN1",
+                "verb": "GET",
+                "title": "Request Approval via Seller Central.",
+                "type": "text/html"
+              }
+            ]
+          }
+        ]
+      }
+    ]
   }
 }

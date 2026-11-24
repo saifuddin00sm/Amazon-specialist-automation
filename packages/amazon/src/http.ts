@@ -5,7 +5,8 @@ import { USER_AGENT } from "./user-agent";
  * carries seller data, and none of that may reach the logs.
  */
 export type AmazonRequestLog = {
-  service: "lwa" | "sp-api";
+  /** Product type schemas are downloaded from a presigned link, not SP-API itself. */
+  service: "lwa" | "sp-api" | "schema";
   operation: string;
   method: string;
   /** Undefined when the request never got a response. */

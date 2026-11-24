@@ -14,6 +14,7 @@ export const LISTINGS_ITEMS_RATE_LIMITS = {
   getListingsItem: { rate: 5, burst: 10 },
   searchListingsItems: { rate: 5, burst: 5 },
   patchListingsItem: { rate: 5, burst: 5 },
+  putListingsItem: { rate: 5, burst: 10 },
 } as const satisfies Record<string, RateLimit>;
 
 export const ListingsIncludedDataSchema = z.enum([
@@ -107,6 +108,17 @@ export type PatchOperation = z.infer<typeof PatchOperationSchema>;
 export const ListingsItemPatchRequestSchema = z.object({ productType: z.string().min(1), patches: z.array(PatchOperationSchema).min(1) });
 export type ListingsItemPatchRequest = z.infer<typeof ListingsItemPatchRequestSchema>;
 
+/** Which attributes a put carries: the product's facts, its offer, or both. */
+export const ListingsRequirementsSchema = z.enum(["LISTING", "LISTING_PRODUCT_ONLY", "LISTING_OFFER_ONLY"]);
+
+/** A whole listing: every attribute it has, keyed by attribute name, shaped by its product type's schema. */
+export const ListingsItemPutRequestSchema = z.object({
+  productType: z.string().min(1),
+  requirements: ListingsRequirementsSchema.optional(),
+  attributes: ListingAttributesSchema,
+});
+export type ListingsItemPutRequest = z.infer<typeof ListingsItemPutRequestSchema>;
+
 export const ListingsSubmissionSchema = z.object({
   sku: z.string(),
   /** ACCEPTED when submitted; VALID or INVALID for a validation preview. */
@@ -151,16 +163,10 @@ export type SearchListingsItemsInput = {
 /** The proposal a write publishes; the client checks its status, not its contents. */
 export type PublishingProposal = Pick<Proposal, "id" | "status">;
 
-export type PatchListingsItemInput = {
-  sellerId: string;
-  sku: string;
-  marketplaceIds: string[];
-  body: ListingsItemPatchRequest;
-  includedData?: ("identifiers" | "issues")[];
-  issueLocale?: string;
-} & (
+/** A write needs an approved proposal, unless Amazon only checks it. */
+type ListingsWriteAuthority =
   | {
-      /** Amazon checks the patch and changes nothing, so no proposal is needed. */
+      /** Amazon checks the write and changes nothing, so no proposal is needed. */
       mode: "VALIDATION_PREVIEW";
       proposal?: PublishingProposal;
     }
@@ -168,8 +174,26 @@ export type PatchListingsItemInput = {
       mode?: undefined;
       /** Must be approved: nothing else is ever written to Amazon. */
       proposal: PublishingProposal;
-    }
-);
+    };
+
+export type PatchListingsItemInput = {
+  sellerId: string;
+  sku: string;
+  marketplaceIds: string[];
+  body: ListingsItemPatchRequest;
+  includedData?: ("identifiers" | "issues")[];
+  issueLocale?: string;
+} & ListingsWriteAuthority;
+
+export type PutListingsItemInput = {
+  sellerId: string;
+  sku: string;
+  /** Amazon takes one marketplace per put. */
+  marketplaceIds: [string];
+  body: ListingsItemPutRequest;
+  includedData?: ("identifiers" | "issues")[];
+  issueLocale?: string;
+} & ListingsWriteAuthority;
 
 /** A write to Amazon for a proposal that isn't approved. Nothing was sent. */
 export class ProposalNotApprovedError extends Error {
@@ -213,10 +237,8 @@ export function listingsItemsOperations(request: SpApiRequest) {
      * approved, or the call is a validation preview.
      */
     patchListingsItem(input: PatchListingsItemInput): Promise<ListingsSubmission> {
-      if (input.mode !== "VALIDATION_PREVIEW") {
-        const refusal = input.proposal ? transitionRefusal(input.proposal.status, "publish") : "A write to Amazon needs an approved proposal.";
-        if (refusal) return Promise.reject(new ProposalNotApprovedError(refusal));
-      }
+      const refusal = writeRefusal(input);
+      if (refusal) return Promise.reject(refusal);
       return request({
         operation: "patchListingsItem",
         rateLimit: LISTINGS_ITEMS_RATE_LIMITS.patchListingsItem,
@@ -228,5 +250,31 @@ export function listingsItemsOperations(request: SpApiRequest) {
         schema: ListingsSubmissionSchema,
       });
     },
+
+    /**
+     * Creates a listing, or replaces every attribute of one. Refused before anything is sent unless the
+     * proposal is approved, or the call is a validation preview.
+     */
+    putListingsItem(input: PutListingsItemInput): Promise<ListingsSubmission> {
+      const refusal = writeRefusal(input);
+      if (refusal) return Promise.reject(refusal);
+      return request({
+        operation: "putListingsItem",
+        rateLimit: LISTINGS_ITEMS_RATE_LIMITS.putListingsItem,
+        sellerId: input.sellerId,
+        method: "PUT",
+        path: listingPath(input.sellerId, input.sku),
+        query: { marketplaceIds: input.marketplaceIds, includedData: input.includedData, mode: input.mode, issueLocale: input.issueLocale },
+        body: ListingsItemPutRequestSchema.parse(input.body),
+        schema: ListingsSubmissionSchema,
+      });
+    },
   };
+}
+
+/** Why a write may not go to Amazon, or undefined when it may. */
+function writeRefusal(input: ListingsWriteAuthority): ProposalNotApprovedError | undefined {
+  if (input.mode === "VALIDATION_PREVIEW") return undefined;
+  const refusal = input.proposal ? transitionRefusal(input.proposal.status, "publish") : "A write to Amazon needs an approved proposal.";
+  return refusal ? new ProposalNotApprovedError(refusal) : undefined;
 }

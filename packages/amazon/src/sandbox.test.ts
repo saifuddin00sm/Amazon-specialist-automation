@@ -114,6 +114,34 @@ describe.skipIf(skip)("SP-API sandbox", () => {
     expect(invalid.issues?.length).toBeGreaterThan(0);
   });
 
+  it("putListingsItem for an approved proposal", async () => {
+    const submission = await client.putListingsItem({
+      sellerId,
+      sku: "GM-ZDPI-9B4E",
+      marketplaceIds: [US],
+      body: { productType: "LUGGAGE", requirements: "LISTING", attributes: { item_name: patchBody.patches[0]!.value } },
+      proposal: { id: "sandbox-proposal", status: "approved" },
+    });
+    expect(submission.status).toBe("ACCEPTED");
+  });
+
+  it("putListingsItem validation preview", async () => {
+    const preview = await client.putListingsItem({
+      sellerId,
+      sku: "VALIDATION_VALID",
+      marketplaceIds: [US],
+      body: { productType: "LUGGAGE", attributes: { item_name: patchBody.patches[0]!.value } },
+      mode: "VALIDATION_PREVIEW",
+      includedData: ["identifiers", "issues"],
+    });
+    expect(preview.status).toBe("VALID");
+  });
+
+  it("getListingsRestrictions", async () => {
+    const result = await client.getListingsRestrictions({ sellerId, asin: "B0000ASIN1", marketplaceIds: [US] });
+    expect(result.restrictions.length).toBeGreaterThan(0);
+  });
+
   it("searchDefinitionsProductTypes", async () => {
     const result = await client.searchDefinitionsProductTypes({ sellerId, marketplaceIds: [US], keywords: ["luggage"] });
     expect(result.productTypes.length).toBeGreaterThan(0);

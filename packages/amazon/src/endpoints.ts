@@ -30,6 +30,19 @@ export const MARKETPLACE_REGIONS: Record<Marketplace, SpApiRegion> = {
   JP: "fe",
 };
 
+/** The language each marketplace's listing copy is written in, as Amazon tags attribute values. */
+export const MARKETPLACE_LANGUAGES: Record<Marketplace, string> = {
+  US: "en_US",
+  CA: "en_CA",
+  MX: "es_MX",
+  UK: "en_GB",
+  DE: "de_DE",
+  FR: "fr_FR",
+  IT: "it_IT",
+  ES: "es_ES",
+  JP: "ja_JP",
+};
+
 const HOSTS: Record<SpApiRegion, string> = {
   na: "sellingpartnerapi-na.amazon.com",
   eu: "sellingpartnerapi-eu.amazon.com",

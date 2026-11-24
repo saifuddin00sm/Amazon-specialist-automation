@@ -1,0 +1,286 @@
+{
+  "$schema": "https://schemas.amazon.com/selling-partners/definitions/product-types/meta-schema/v1",
+  "$id": "https://schemas.amazon.com/selling-partners/definitions/product-types/schema/v1/LUGGAGE",
+  "$comment": "Sandbox stand-in: Amazon's sandbox links getDefinitionsProductType to no real schema. Cut down from the LUGGAGE schema to what a product-only listing (LISTING_PRODUCT_ONLY) needs, in Amazon's shapes.",
+  "$defs": {
+    "marketplace_id": { "type": "string", "editable": false, "hidden": true },
+    "language_tag": { "type": "string", "editable": false, "hidden": true },
+    "dimension": {
+      "type": "object",
+      "required": ["value", "unit"],
+      "additionalProperties": false,
+      "properties": {
+        "value": { "type": "number", "exclusiveMinimum": 0 },
+        "unit": { "type": "string", "enum": ["centimeters", "inches", "millimeters", "meters"] }
+      }
+    }
+  },
+  "type": "object",
+  "required": [
+    "item_name",
+    "brand",
+    "supplier_declared_has_product_identifier_exemption",
+    "item_type_keyword",
+    "bullet_point",
+    "product_description",
+    "country_of_origin",
+    "material",
+    "item_dimensions",
+    "main_product_image_locator"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "required": ["supplier_declared_has_product_identifier_exemption"],
+        "properties": {
+          "supplier_declared_has_product_identifier_exemption": {
+            "contains": { "required": ["value"], "properties": { "value": { "enum": [false] } } }
+          }
+        }
+      },
+      "then": { "required": ["externally_assigned_product_identifier"] }
+    }
+  ],
+  "properties": {
+    "item_name": {
+      "title": "Item Name",
+      "description": "Provide an item name that describes the product, led by the brand.",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1,
+      "maxUniqueItems": 1,
+      "selectors": ["marketplace_id", "language_tag"],
+      "items": {
+        "type": "object",
+        "required": ["value", "language_tag"],
+        "additionalProperties": false,
+        "properties": {
+          "value": { "title": "Item Name", "type": "string", "minLength": 1, "maxLength": 200, "maxUtf8ByteLength": 400 },
+          "language_tag": { "$ref": "#/$defs/language_tag" },
+          "marketplace_id": { "$ref": "#/$defs/marketplace_id" }
+        }
+      }
+    },
+    "brand": {
+      "title": "Brand Name",
+      "description": "Provide the brand name of the product.",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1,
+      "selectors": ["marketplace_id", "language_tag"],
+      "items": {
+        "type": "object",
+        "required": ["value", "language_tag"],
+        "additionalProperties": false,
+        "properties": {
+          "value": { "title": "Brand Name", "type": "string", "minLength": 1, "maxLength": 100 },
+          "language_tag": { "$ref": "#/$defs/language_tag" },
+          "marketplace_id": { "$ref": "#/$defs/marketplace_id" }
+        }
+      }
+    },
+    "supplier_declared_has_product_identifier_exemption": {
+      "title": "Product Exemption from Global Trade Identification Number",
+      "description": "Whether Amazon granted this brand an exemption from listing with a GTIN (UPC, EAN).",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1,
+      "selectors": ["marketplace_id"],
+      "items": {
+        "type": "object",
+        "required": ["value"],
+        "additionalProperties": false,
+        "properties": {
+          "value": { "title": "Product Exemption from Global Trade Identification Number", "type": "boolean" },
+          "marketplace_id": { "$ref": "#/$defs/marketplace_id" }
+        }
+      }
+    },
+    "externally_assigned_product_identifier": {
+      "title": "External Product ID",
+      "description": "The product's GTIN: its UPC, EAN or GTIN-14.",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1,
+      "selectors": ["marketplace_id", "type"],
+      "items": {
+        "type": "object",
+        "required": ["type", "value"],
+        "additionalProperties": false,
+        "properties": {
+          "type": { "title": "External Product ID Type", "type": "string", "enum": ["ean", "gtin", "upc"] },
+          "value": { "title": "External Product ID", "type": "string", "minLength": 8, "maxLength": 14 },
+          "marketplace_id": { "$ref": "#/$defs/marketplace_id" }
+        }
+      }
+    },
+    "item_type_keyword": {
+      "title": "Item Type Keyword",
+      "description": "The keyword that places the product in Amazon's browse tree.",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1,
+      "selectors": ["marketplace_id"],
+      "items": {
+        "type": "object",
+        "required": ["value"],
+        "additionalProperties": false,
+        "properties": {
+          "value": {
+            "title": "Item Type Keyword",
+            "type": "string",
+            "enum": ["carry-on-luggage", "checked-luggage", "luggage-sets", "garment-bags", "travel-duffels"],
+            "enumNames": ["Carry-On Luggage", "Checked Luggage", "Luggage Sets", "Garment Bags", "Travel Duffels"]
+          },
+          "marketplace_id": { "$ref": "#/$defs/marketplace_id" }
+        }
+      }
+    },
+    "bullet_point": {
+      "title": "Bullet Point",
+      "description": "Key features of the product, one per bullet.",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 5,
+      "selectors": ["marketplace_id", "language_tag"],
+      "items": {
+        "type": "object",
+        "required": ["value", "language_tag"],
+        "additionalProperties": false,
+        "properties": {
+          "value": { "title": "Bullet Point", "type": "string", "minLength": 1, "maxLength": 500, "maxUtf8ByteLength": 1000 },
+          "language_tag": { "$ref": "#/$defs/language_tag" },
+          "marketplace_id": { "$ref": "#/$defs/marketplace_id" }
+        }
+      }
+    },
+    "product_description": {
+      "title": "Product Description",
+      "description": "A description of the product.",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1,
+      "selectors": ["marketplace_id", "language_tag"],
+      "items": {
+        "type": "object",
+        "required": ["value", "language_tag"],
+        "additionalProperties": false,
+        "properties": {
+          "value": { "title": "Product Description", "type": "string", "minLength": 1, "maxLength": 2000, "maxUtf8ByteLength": 4000 },
+          "language_tag": { "$ref": "#/$defs/language_tag" },
+          "marketplace_id": { "$ref": "#/$defs/marketplace_id" }
+        }
+      }
+    },
+    "generic_keyword": {
+      "title": "Generic Keyword",
+      "description": "Search terms shoppers use that the title and bullets don't.",
+      "type": "array",
+      "maxItems": 1,
+      "selectors": ["marketplace_id", "language_tag"],
+      "items": {
+        "type": "object",
+        "required": ["value", "language_tag"],
+        "additionalProperties": false,
+        "properties": {
+          "value": { "title": "Generic Keyword", "type": "string", "maxUtf8ByteLength": 249 },
+          "language_tag": { "$ref": "#/$defs/language_tag" },
+          "marketplace_id": { "$ref": "#/$defs/marketplace_id" }
+        }
+      }
+    },
+    "country_of_origin": {
+      "title": "Country/Region of Origin",
+      "description": "The country or region where the product was made.",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1,
+      "selectors": ["marketplace_id"],
+      "items": {
+        "type": "object",
+        "required": ["value"],
+        "additionalProperties": false,
+        "properties": {
+          "value": {
+            "title": "Country/Region of Origin",
+            "type": "string",
+            "enum": ["CN", "IN", "VN", "MX", "US", "DE", "IT", "JP", "TW", "TR"],
+            "enumNames": ["China", "India", "Vietnam", "Mexico", "United States", "Germany", "Italy", "Japan", "Taiwan", "Turkey"]
+          },
+          "marketplace_id": { "$ref": "#/$defs/marketplace_id" }
+        }
+      }
+    },
+    "material": {
+      "title": "Material",
+      "description": "The materials the product is made of, main material first.",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 5,
+      "selectors": ["marketplace_id", "language_tag"],
+      "items": {
+        "type": "object",
+        "required": ["value", "language_tag"],
+        "additionalProperties": false,
+        "properties": {
+          "value": { "title": "Material", "type": "string", "minLength": 1, "maxLength": 100 },
+          "language_tag": { "$ref": "#/$defs/language_tag" },
+          "marketplace_id": { "$ref": "#/$defs/marketplace_id" }
+        }
+      }
+    },
+    "color": {
+      "title": "Color",
+      "description": "The color as shoppers see it.",
+      "type": "array",
+      "maxItems": 1,
+      "selectors": ["marketplace_id", "language_tag"],
+      "items": {
+        "type": "object",
+        "required": ["value", "language_tag"],
+        "additionalProperties": false,
+        "properties": {
+          "value": { "title": "Color", "type": "string", "minLength": 1, "maxLength": 50 },
+          "language_tag": { "$ref": "#/$defs/language_tag" },
+          "marketplace_id": { "$ref": "#/$defs/marketplace_id" }
+        }
+      }
+    },
+    "item_dimensions": {
+      "title": "Item Dimensions",
+      "description": "Length, width and height of the product, unpackaged.",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1,
+      "selectors": ["marketplace_id"],
+      "items": {
+        "type": "object",
+        "required": ["length", "width", "height"],
+        "additionalProperties": false,
+        "properties": {
+          "length": { "$ref": "#/$defs/dimension" },
+          "width": { "$ref": "#/$defs/dimension" },
+          "height": { "$ref": "#/$defs/dimension" },
+          "marketplace_id": { "$ref": "#/$defs/marketplace_id" }
+        }
+      }
+    },
+    "main_product_image_locator": {
+      "title": "Main Image Location",
+      "description": "The main image: the product on a white background.",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1,
+      "selectors": ["marketplace_id"],
+      "items": {
+        "type": "object",
+        "required": ["media_location"],
+        "additionalProperties": false,
+        "properties": {
+          "media_location": { "title": "Media Location", "type": "string", "format": "uri", "minLength": 1, "maxLength": 2048 },
+          "marketplace_id": { "$ref": "#/$defs/marketplace_id" }
+        }
+      }
+    }
+  }
+}
