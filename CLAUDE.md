@@ -15,6 +15,7 @@
 - done: LLM gateway (packages/llm). Stand-in agents log scripted calls through it
 - done: list optimizer
 - done: new listing creation
+- next: Listing reviewer and the loop
 
 ## Stack
 - pnpm + Turborepo monorepo; TypeScript strict everywhere
