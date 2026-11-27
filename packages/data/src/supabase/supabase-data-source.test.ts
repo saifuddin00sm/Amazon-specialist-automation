@@ -1,3 +1,4 @@
+import type { AgentRunStep } from "@app/core";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { describeDataSourceContract } from "../data-source.contract";
 import { createSupabaseAmazonAuthorizationStore } from "./amazon-authorizations";
@@ -82,10 +83,36 @@ describe.skipIf(skip)("supabase DataSource as a signed-in member", () => {
     const source = await signedIn(approver.email);
 
     const run = await source.startListingOptimizer({ productId: product.id, memberId: approver.id });
-    const { run: finished, proposal } = await source.completeAgentRun(run.id);
+    // The optimizeListing workflow, acting as the backend, takes the run from there; a member can't.
+    const live = dataset.listingVersions.find((version) => version.productId === product.id && version.status === "live")!;
+    const at = now().toISOString();
+    const steps: AgentRunStep[] = [
+      { id: `${run.id}_draft1`, kind: "draft", agent: "listing_writer", round: 1, title: "Optimizer draft", text: "Draft.", listing: { ...live, title: `${live.title} – revised` }, startedAt: at, finishedAt: at },
+      {
+        id: `${run.id}_review1`,
+        kind: "review",
+        agent: "listing_reviewer",
+        round: 1,
+        title: "Reviewer round 1",
+        text: "Overall 90/100.",
+        scores: { keyword_coverage: 9, grounding: 9, conversion_copy: 9, title_structure: 9, attributes: 9, voice: 9 },
+        overall: 90,
+        findings: [],
+        target: 85,
+        gate: { passed: true },
+        startedAt: at,
+        finishedAt: at,
+      },
+      { id: `${run.id}_awaiting`, kind: "awaiting_approval", title: "Awaiting approval", text: "Waiting.", startedAt: at, finishedAt: at },
+    ];
+    await expect(source.appendAgentRunSteps({ runId: run.id, steps })).rejects.toMatchObject({ code: "forbidden" });
+    const backend = createSupabaseDataSource(admin, { now });
+    await backend.appendAgentRunSteps({ runId: run.id, steps });
+    const { run: finished, proposal } = await backend.completeAgentRun(run.id);
     expect(finished.status).toBe("succeeded");
-    expect(proposal).toMatchObject({ status: "pending_approval", sellerAccountId: accountId });
+    expect(proposal).toMatchObject({ status: "pending_approval", sellerAccountId: accountId, scores: { rubric: 90, rubricTarget: 85 } });
     expect(await source.getProposal(proposal!.id)).toEqual(proposal);
+    expect(await source.getAgentRun(run.id)).toEqual(finished);
   });
 
   it("lets only the owner change report branding through row-level security", async () => {

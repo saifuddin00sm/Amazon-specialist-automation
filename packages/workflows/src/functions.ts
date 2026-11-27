@@ -2,9 +2,10 @@ import { LwaError, MissingRefreshTokenError, ProposalNotApprovedError, TokenCryp
 import { AgentRunError, CatalogSyncError, ProposalWriteError } from "@app/data";
 import { NonRetriableError, cron } from "inngest";
 import { authorizedSellerAccountIds, syncSellerCatalog, type RunStep } from "./catalog-sync";
-import { catalogSyncRequested, inngest, listingsItemChanged, newListingRequested, proposalDecided } from "./client";
+import { catalogSyncRequested, inngest, listingOptimizeRequested, listingsItemChanged, newListingRequested, proposalDecided } from "./client";
 import { workflowDeps } from "./deps";
 import { approvedListingsToSubmit, draftNewListing, failNewListingSubmission, runIdFor, submitNewListing, trackNewListing } from "./new-listing";
+import { OPTIMIZER_STOPPED, optimizeListingRun } from "./optimize-listing";
 
 /**
  * Failures a retry won't fix: the account is gone, the seller never authorized the app or revoked it
@@ -137,5 +138,23 @@ export const sweepApprovedNewListings = inngest.createFunction(
   },
 );
 
+/**
+ * Optimizes a product's listing on the run a member started: optimizer, rules check and reviewer,
+ * up to three rounds, then a proposal (see optimizeListingRun). One run per product at a time.
+ */
+export const optimizeListing = inngest.createFunction(
+  {
+    id: "optimize-listing",
+    name: "Listing optimizer",
+    triggers: [listingOptimizeRequested],
+    concurrency: { key: "event.data.productId", limit: 1 },
+    // It gave up: say so on the run, so the product page doesn't wait on it. A run that finished stays as it is.
+    onFailure: async ({ event }) => {
+      await workflowDeps().dataSource.failAgentRun({ runId: event.data.event.data.runId, error: OPTIMIZER_STOPPED });
+    },
+  },
+  async ({ event, step }) => optimizeListingRun(workflowDeps(), event.data, { run: permanentFailuresStop(step) }),
+);
+
 /** Every Inngest function, for the serve handler. */
-export const functions = [nightlyCatalogSync, syncCatalog, newListing, submitApprovedNewListing, trackListingChange, sweepApprovedNewListings];
+export const functions = [nightlyCatalogSync, syncCatalog, newListing, submitApprovedNewListing, trackListingChange, sweepApprovedNewListings, optimizeListing];

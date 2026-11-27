@@ -4,7 +4,9 @@ import {
   ProductTypeSummarySchema,
   parseNewCampaignPlan,
   parseNewListing,
+  missedRubricTarget,
   type AgentRun,
+  type AgentRunStep,
   type CampaignBrief,
   type ImportedListing,
   type ListingSubmission,
@@ -389,38 +391,106 @@ export function describeDataSourceContract(
         return { merchant, product, live, owner: memberOf(merchant.id, "owner"), viewer: memberOf(merchant.id, "viewer") };
       };
 
-      it("starts a running run with a planned timeline and audits it", async () => {
+      /**
+       * What the optimizeListing workflow appends to a run: a draft and a review per round (each
+       * with its model call), then the awaiting-approval step. `rounds` is each review's overall.
+       */
+      const reviewRounds = (run: AgentRun, live: { title: string; bullets: string[]; description: string; backendKeywords: string }, rounds: number[]) => {
+        const at = "2026-10-31T09:00:00.000Z";
+        const steps: AgentRunStep[] = rounds.flatMap((overall, i): AgentRunStep[] => [
+          {
+            id: `${run.id}_draft${i + 1}`,
+            kind: "draft",
+            agent: "listing_writer",
+            round: i + 1,
+            title: i === 0 ? "Optimizer draft" : "Revised draft",
+            text: "Draft.",
+            listing: { ...live, title: `${live.title} – round ${i + 1}` },
+            startedAt: at,
+            finishedAt: at,
+          },
+          {
+            id: `${run.id}_review${i + 1}`,
+            kind: "review",
+            agent: "listing_reviewer",
+            round: i + 1,
+            title: `Reviewer round ${i + 1}`,
+            text: `Overall ${overall}/100.`,
+            scores: { keyword_coverage: 8, grounding: 9, conversion_copy: 8, title_structure: 8, attributes: 9, voice: 9 },
+            overall,
+            findings: overall >= 85 ? [] : [{ criterion: "keyword_coverage", severity: "warning", message: "Put the main keyword in the title." }],
+            summary: overall >= 85 ? "Ready for a decision." : "Close, but the main keyword is missing from the title.",
+            target: 85,
+            gate: { passed: overall > 0 },
+            startedAt: at,
+            finishedAt: at,
+          },
+        ]);
+        steps.push({ id: `${run.id}_awaiting`, kind: "awaiting_approval", title: "Awaiting approval", text: "Waiting for a member.", startedAt: at, finishedAt: at });
+        const calls: LlmCall[] = steps
+          .filter((step) => step.kind === "draft" || step.kind === "review")
+          .map((step) => ({
+            id: `${step.id}_llm`,
+            stepId: step.id,
+            task: step.kind === "draft" ? "listing_rewrite" : "listing_review",
+            promptId: step.kind === "draft" ? "listing_writer.rewrite" : "listing_reviewer.review",
+            promptVersion: 2,
+            provider: "anthropic",
+            model: step.kind === "draft" ? "claude-opus-5-5" : "claude-sonnet-4-6",
+            attempt: 1,
+            outcome: "ok",
+            inputTokens: 2_000,
+            outputTokens: 600,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+            costUsd: 0.02,
+            startedAt: at,
+            finishedAt: at,
+          }));
+        return { runId: run.id, steps, llmCalls: calls };
+      };
+
+      it("starts a running run with no steps for its workflow to fill, and audits it", async () => {
         const { source } = await setup();
         const { merchant, product, owner } = subject();
         const run = await source.startListingOptimizer({ productId: product.id, memberId: owner.id });
 
         expect(AgentRunSchema.safeParse(run).success).toBe(true);
-        expect(run).toMatchObject({ status: "running", trigger: "manual", subject: { type: "product", id: product.id } });
+        expect(run).toMatchObject({ status: "running", agent: "listing_writer", trigger: "manual", subject: { type: "product", id: product.id }, steps: [] });
+        expect(run.llmCalls ?? []).toEqual([]);
         expect(await source.listAgentRuns({ workspaceId: merchant.id, subjectId: product.id })).toEqual([run]);
         const [event] = await source.listAuditEvents({ workspaceId: merchant.id, limit: 1 });
         expect(event).toMatchObject({ action: "agent_run.started", entity: { id: run.id }, metadata: { requestedBy: owner.id } });
       });
 
-      it("files a pending proposal with a proposed version and review on completion", async () => {
+      it("files the last draft as a pending proposal with a proposed version and the last review", async () => {
         const { source } = await setup();
         const { merchant, product, live, owner } = subject();
         const run = await source.startListingOptimizer({ productId: product.id, memberId: owner.id });
+        // Nothing to file before the workflow has a reviewed draft.
+        await expect(source.completeAgentRun(run.id)).rejects.toMatchObject({ code: "conflict" });
+        const work = reviewRounds(run, live, [62, 91]);
+        const appended = await source.appendAgentRunSteps(work);
+        expect(appended.llmCalls).toEqual(work.llmCalls);
         const { run: finished, proposal } = await source.completeAgentRun(run.id);
 
-        expect(finished).toMatchObject({ status: "succeeded", proposalIds: [proposal!.id] });
+        expect(finished).toMatchObject({ status: "succeeded", proposalIds: [proposal!.id], llmCalls: work.llmCalls });
         expect(finished.steps?.at(-1)).toMatchObject({ kind: "awaiting_approval", proposalId: proposal!.id });
         expect(proposal).toMatchObject({
           type: "listing_update",
           status: "pending_approval",
+          title: `Rewrite listing for ${product.title}`,
+          rationale: expect.stringContaining("2 review rounds took the draft from 62 to 91."),
           target: { type: "product", id: product.id },
           createdBy: { type: "agent", agent: "listing_writer", agentRunId: run.id },
-          scores: { rubric: 88 },
+          scores: { rubric: 91, rubricTarget: 85 },
         });
+        expect(missedRubricTarget(proposal!.scores)).toBe(false);
 
         const review = await source.getReview(proposal!.reviewId!);
-        expect(review).toMatchObject({ overall: 88, reviewer: { agent: "listing_reviewer" } });
+        expect(review).toMatchObject({ overall: 91, reviewer: { agent: "listing_reviewer" }, report: { summary: "Ready for a decision." } });
         const [newest] = await source.listListingVersions(product.id);
-        expect(newest).toMatchObject({ id: review!.listingVersionId, status: "proposed" });
+        expect(newest).toMatchObject({ id: review!.listingVersionId, status: "proposed", title: `${live.title} – round 2` });
         // The live listing is untouched until someone approves.
         expect((await source.listListingVersions(product.id)).find((version) => version.status === "live")).toEqual(live);
 
@@ -433,58 +503,54 @@ export function describeDataSourceContract(
         expect(await source.completeAgentRun(run.id)).toEqual({ run: finished, proposal });
       });
 
+      it("flags a draft that never reached the target, and leaves it for a member even when autonomy would approve it", async () => {
+        const { source } = await setup();
+        const { product, live, owner } = subject();
+        await source.updateSellerAccountSettings({ sellerAccountId: product.sellerAccountId, memberId: owner.id, autonomyLevel: "L3" });
+        const run = await source.startListingOptimizer({ productId: product.id, memberId: owner.id });
+        await source.appendAgentRunSteps(reviewRounds(run, live, [0, 64, 78]));
+        const { run: finished, proposal } = await source.completeAgentRun(run.id);
+
+        expect(proposal).toMatchObject({
+          status: "pending_approval",
+          risk: "medium",
+          title: `Rewrite listing for ${product.title} (did not reach target)`,
+          rationale: expect.stringMatching(/^Did not reach target: 3 review rounds took the draft from 0 to 78, short of the 85/),
+          scores: { rubric: 78, rubricTarget: 85 },
+        });
+        expect(missedRubricTarget(proposal!.scores)).toBe(true);
+        expect(finished.summary).toBe("Drafted 1 listing update after 3 review rounds, short of the 85 target.");
+      });
+
       it("refuses viewers, a second run in flight, and products with a proposal waiting", async () => {
         const { source } = await setup();
-        const { product, owner, viewer } = subject();
+        const { product, live, owner, viewer } = subject();
         await expect(source.startListingOptimizer({ productId: product.id, memberId: viewer.id })).rejects.toMatchObject({ code: "forbidden" });
 
         const run = await source.startListingOptimizer({ productId: product.id, memberId: owner.id });
         await expect(source.startListingOptimizer({ productId: product.id, memberId: owner.id })).rejects.toMatchObject({ code: "conflict" });
+        await source.appendAgentRunSteps(reviewRounds(run, live, [90]));
         await source.completeAgentRun(run.id);
         await expect(source.startListingOptimizer({ productId: product.id, memberId: owner.id })).rejects.toMatchObject({ code: "conflict" });
         await expect(source.completeAgentRun("nope")).rejects.toMatchObject({ code: "not_found" });
       });
 
-      it("logs a model call for every draft and review round, with its prompt version, model, tokens and cost", async () => {
+      it("records model calls on a running run, and refuses them once it has finished", async () => {
         const { source } = await setup();
-        const { product, owner } = subject();
+        const { product, live, owner } = subject();
         const run = await source.startListingOptimizer({ productId: product.id, memberId: owner.id });
-
-        const modelSteps = run.steps!.filter((step) => step.kind === "draft" || step.kind === "review");
-        expect(run.llmCalls?.map((call) => call.stepId)).toEqual(modelSteps.map((step) => step.id));
-        expect(run.llmCalls?.map((call) => `${call.promptId}@v${call.promptVersion}`)).toEqual([
-          "listing_writer.rewrite@v2",
-          "listing_reviewer.review@v1",
-          "listing_writer.rewrite@v2",
-          "listing_reviewer.review@v1",
-        ]);
-        for (const call of run.llmCalls!) {
-          expect(call).toMatchObject({ provider: "scripted", model: "claude-opus-5-5", outcome: "ok" });
-          expect(call.inputTokens).toBeGreaterThan(0);
-          expect(call.outputTokens).toBeGreaterThan(0);
-          expect(call.costUsd).toBeGreaterThan(0);
-        }
-        // Finishing the run keeps its calls.
-        const { run: finished } = await source.completeAgentRun(run.id);
-        expect(finished.llmCalls).toEqual(run.llmCalls);
-        expect((await source.getAgentRun(run.id))?.llmCalls).toEqual(run.llmCalls);
-      });
-
-      it("records further model calls on a running run, and refuses them once it has finished", async () => {
-        const { source } = await setup();
-        const { product, owner } = subject();
-        const run = await source.startListingOptimizer({ productId: product.id, memberId: owner.id });
+        const work = reviewRounds(run, live, [90]);
+        await source.appendAgentRunSteps(work);
         const call: LlmCall = {
-          ...run.llmCalls![0]!,
+          ...work.llmCalls[0]!,
           id: `${run.id}_retry`,
-          provider: "anthropic",
           attempt: 2,
           outcome: "invalid_output",
           error: "title: Too big: expected string to have <=200 characters",
         };
 
         const updated = await source.recordLlmCalls({ runId: run.id, calls: [call] });
-        expect(updated.llmCalls).toEqual([...run.llmCalls!, call]);
+        expect(updated.llmCalls).toEqual([...work.llmCalls, call]);
         expect(await source.getAgentRun(run.id)).toEqual(updated);
 
         await expect(source.recordLlmCalls({ runId: run.id, calls: [{ ...call, stepId: "not_a_step" }] })).rejects.toMatchObject({ code: "invalid_input" });

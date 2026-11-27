@@ -1,21 +1,18 @@
 import {
   AgentRunSchema,
-  LISTING_LIMITS,
   ListingVersionSchema,
   ProposalSchema,
   ReviewSchema,
   autonomyFor,
   canActOnAccount,
-  checkListingCompliance,
   checkProposalCompliance,
-  factSheet,
+  missedRubricTarget,
   type Actor,
   type AgentRun,
-  type AgentRunStep,
   type AuditEvent,
+  type ComplianceCheck,
   type DiffEntry,
   type ListingVersion,
-  type LlmCall,
   type Member,
   type Product,
   type ProductFacts,
@@ -25,12 +22,8 @@ import {
   type SellerAccount,
   type Workspace,
 } from "@app/core";
-import { PROMPTS } from "@app/llm";
-import { listingClaims } from "@app/rules";
 import { AgentRunError } from "../data-source";
 import { assertAgentsRunning, fileWithAutonomy, finalStep } from "./autonomy";
-import { planListingOptimizerRun, standInDraft } from "./listing-optimizer";
-import { scripted, scriptedLlmCalls } from "./model-calls";
 
 /** The parts of the mock's in-memory store that agent runs read. */
 export type RunStore = {
@@ -51,7 +44,11 @@ type AuditDraft = Omit<AuditEvent, "id">;
 
 const LISTING_FIELDS = ["title", "bullets", "description", "backendKeywords"] as const;
 
-/** Plans a listing optimizer run on a product and returns it running, with the audit event to record. */
+/**
+ * Starts a listing optimizer run on a product, with no steps yet: the optimizeListing workflow
+ * (packages/workflows) drafts, checks and reviews, appending each step as it takes it, then files the
+ * run with completeListingOptimizerRun. Returns it running, with the audit event to record.
+ */
 export function startListingOptimizerRun(
   store: RunStore,
   { productId, memberId, at }: { productId: string; memberId: string; at: Date },
@@ -79,7 +76,6 @@ export function startListingOptimizerRun(
   }
 
   const id = store.nextId.run();
-  const { steps } = planListingOptimizerRun({ runId: id, product, facts, live, startedAt: at.getTime() });
   const run = AgentRunSchema.parse({
     id,
     workspaceId: account.workspaceId,
@@ -91,8 +87,7 @@ export function startListingOptimizerRun(
     subject: { type: "product", id: productId },
     summary: `Rewriting the listing for ${product.title}.`,
     proposalIds: [],
-    steps,
-    llmCalls: listingOptimizerCalls(steps, product, facts, live),
+    steps: [],
     startedAt: at.toISOString(),
   });
 
@@ -113,9 +108,11 @@ export function startListingOptimizerRun(
 }
 
 /**
- * Files a running optimizer run's output: the revised draft as a proposed ListingVersion, the last
+ * Files a running optimizer run's output: the last draft as a proposed ListingVersion, the last
  * reviewer round as its Review, and a listing_update Proposal, as the account's autonomy allows: at
- * L0 nothing is filed, at L2/L3 the proposal may be approved by the system. Nothing goes live here.
+ * L0 nothing is filed, at L2/L3 the proposal may be approved by the system. A draft whose last review
+ * fell short of its target is filed all the same, flagged "did not reach target", and never approved
+ * by the system. Nothing goes live here.
  */
 export function completeListingOptimizerRun(
   store: RunStore,
@@ -132,9 +129,8 @@ export function completeListingOptimizerRun(
   const finalDraft = run.steps?.filter((step) => step.kind === "draft").at(-1);
   const reviewRounds = run.steps?.filter((step) => step.kind === "review") ?? [];
   const finalReview = reviewRounds.at(-1);
-  if (!product || !facts || !live || !finalDraft || !finalReview) {
-    throw new AgentRunError("not_found", "The product this run worked on is no longer available.");
-  }
+  if (!product || !facts || !live) throw new AgentRunError("not_found", "The product this run worked on is no longer available.");
+  if (!finalDraft || !finalReview) throw new AgentRunError("conflict", "The run has no reviewed draft to file yet.");
   assertAgentsRunning(store.workspaces.find((workspace) => workspace.id === run.workspaceId));
   const account = store.sellerAccounts.find((candidate) => candidate.id === run.sellerAccountId);
 
@@ -157,7 +153,7 @@ export function completeListingOptimizerRun(
     listingVersionId: version.id,
     scores: finalReview.scores,
     overall: finalReview.overall,
-    report: { summary: "Strong listing after one revision; ready to publish.", findings: finalReview.findings },
+    report: { summary: finalReview.summary ?? `Overall ${finalReview.overall}/100.`, findings: finalReview.findings },
     reviewer,
     createdAt: at,
   });
@@ -165,10 +161,14 @@ export function completeListingOptimizerRun(
   const diff: DiffEntry[] = LISTING_FIELDS.filter((field) => JSON.stringify(live[field]) !== JSON.stringify(version[field])).map(
     (field) => ({ path: field, before: live[field], after: version[field] }),
   );
+  const scores = { confidence: 86, impact: 60, rubric: review.overall, ...(finalReview.target !== undefined ? { rubricTarget: finalReview.target } : {}) };
+  const missed = missedRubricTarget(scores);
   const severities = new Set(review.report.findings.map((finding) => finding.severity));
-  const risk: ProposalRisk = severities.has("error") ? "high" : severities.has("warning") || review.overall < 70 ? "medium" : "low";
+  const risk: ProposalRisk =
+    severities.has("error") || finalReview.gate?.passed === false ? "high" : severities.has("warning") || missed || review.overall < 70 ? "medium" : "low";
   const gained = keywordsGained(facts.targetKeywords, live, version);
   const firstScore = reviewRounds[0]?.overall ?? review.overall;
+  const rounds = `${reviewRounds.length} review ${reviewRounds.length === 1 ? "round" : "rounds"}`;
 
   const proposal = ProposalSchema.parse({
     id: store.nextId.proposal(),
@@ -177,16 +177,20 @@ export function completeListingOptimizerRun(
     type: "listing_update",
     status: "pending_approval",
     risk,
-    title: `Rewrite listing for ${product.title}`,
+    title: `Rewrite listing for ${product.title}${missed ? " (did not reach target)" : ""}`,
     rationale: [
-      `${reviewRounds.length} review rounds took the draft from ${firstScore} to ${review.overall}.`,
+      missed
+        ? `Did not reach target: ${rounds} took the draft from ${firstScore} to ${review.overall}, short of the ${scores.rubricTarget} the reviewer asks for. Read its findings before approving.`
+        : reviewRounds.length === 1
+          ? `The first draft scored ${review.overall} in review.`
+          : `${rounds} took the draft from ${firstScore} to ${review.overall}.`,
       gained.length > 0
         ? `It adds ${gained.length} target ${gained.length === 1 ? "keyword" : "keywords"} missing from the live copy and uses all ${version.bullets.length} bullets.`
         : `It uses all ${version.bullets.length} bullets and grounds every claim in ProductFacts.`,
     ].join(" "),
     target: { type: "product", id: productId },
     diff,
-    scores: { confidence: 86, impact: 60, rubric: review.overall },
+    scores,
     freshness: [
       { source: "live_listing", asOf: run.startedAt },
       { source: "product_facts", asOf: facts.updatedAt < run.startedAt ? facts.updatedAt : run.startedAt },
@@ -198,15 +202,17 @@ export function completeListingOptimizerRun(
 
   const level = autonomyFor(account ?? { autonomyLevel: run.autonomyLevel }, "listing_update");
   const checks = checkProposalCompliance({ type: "listing_update", diff, liveListing: live, facts });
-  const filed = fileWithAutonomy(proposal, level, checks, at);
+  // A draft the reviewer didn't pass is a member's call to make, whatever the autonomy level.
+  const target: ComplianceCheck[] = missed ? [{ id: "review_target", label: "Reviewer target", status: "fail", detail: `${review.overall} of ${scores.rubricTarget}.` }] : [];
+  const filed = fileWithAutonomy(proposal, level, [...checks, ...target], at);
   const filedProposal = filed.outcome === "suggested" ? undefined : filed.proposal;
   const finished = AgentRunSchema.parse({
     ...run,
     status: "succeeded",
     finishedAt: at,
     summary: filedProposal
-      ? `Drafted 1 listing update after ${reviewRounds.length} review rounds.`
-      : `Suggested a listing rewrite after ${reviewRounds.length} review rounds; L0 files nothing.`,
+      ? `Drafted 1 listing update after ${rounds}${missed ? `, short of the ${scores.rubricTarget} target` : ""}.`
+      : `Suggested a listing rewrite after ${rounds}; L0 files nothing.`,
     proposalIds: filedProposal ? [filedProposal.id] : [],
     steps: finalStep(run.steps, filed, "listing updates"),
   });
@@ -222,39 +228,6 @@ export function completeListingOptimizerRun(
   };
   if (filed.outcome === "suggested") return { run: finished, events: [ran] };
   return { run: finished, version, review, proposal: filed.proposal, events: [ran, ...filed.events] };
-}
-
-/** The writer's drafts and the reviewer's rounds, as the gateway calls they stand for. */
-function listingOptimizerCalls(steps: AgentRunStep[], product: Product, facts: ProductFacts, live: ListingVersion): LlmCall[] {
-  const drafts = steps.filter((step) => step.kind === "draft");
-  const reviews = steps.filter((step) => step.kind === "review");
-  const sheet = factSheet(product.brand, facts);
-  return scriptedLlmCalls(steps, (step) => {
-    if (step.kind === "draft") {
-      // Each revision answers the previous round's findings.
-      const findings = reviews.find((review) => review.round === step.round - 1)?.findings ?? [];
-      const input = {
-        productType: product.category,
-        limits: LISTING_LIMITS,
-        facts: sheet,
-        prohibitedClaims: listingClaims(facts.prohibitedClaims).map((claim) => claim.phrase),
-        keywords: facts.targetKeywords,
-        live,
-        findings,
-      };
-      return scripted(PROMPTS.listingRewrite, input, standInDraft(live, step.listing, sheet));
-    }
-    if (step.kind === "review") {
-      const draft = drafts.find((candidate) => candidate.round === step.round);
-      if (!draft) return undefined;
-      return scripted(
-        PROMPTS.listingReview,
-        { facts, draft: draft.listing, checks: checkListingCompliance(draft.listing, facts) },
-        { scores: step.scores, summary: `Overall ${step.overall}/100.`, findings: step.findings },
-      );
-    }
-    return undefined;
-  });
 }
 
 function keywordsGained(keywords: string[], live: ListingVersion, next: ListingVersion): string[] {

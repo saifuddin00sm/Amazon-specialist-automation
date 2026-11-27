@@ -82,6 +82,17 @@ const NO_AUTHORIZATIONS: AmazonAuthorizationStore = {
 };
 
 /**
+ * Why workflowDepsFromEnv can't build the workflows' dependencies from this environment, or
+ * undefined when it can. Check it before starting work a workflow has to finish.
+ */
+export function backgroundWorkUnavailable(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  if (env.DATA_SOURCE === "supabase" && (!env.SUPABASE_URL || !env.SUPABASE_SECRET_KEY)) {
+    return "Background work with DATA_SOURCE=supabase needs SUPABASE_URL and SUPABASE_SECRET_KEY.";
+  }
+  return undefined;
+}
+
+/**
  * From the environment, like the web app. DATA_SOURCE=supabase works on SUPABASE_URL with
  * SUPABASE_SECRET_KEY, where Amazon authorizations are kept too; mock (the default) works on the
  * in-memory dataset, which has none, so there is nothing to sync.
@@ -96,7 +107,8 @@ export function workflowDepsFromEnv(env: NodeJS.ProcessEnv = process.env): AllWo
     return { ...base, dataSource: getMockDataSource(), authorizations: NO_AUTHORIZATIONS, amazon: amazonClients(NO_AUTHORIZATIONS, env) };
   }
   const { SUPABASE_URL: url, SUPABASE_SECRET_KEY: secretKey } = env;
-  if (!url || !secretKey) throw new Error("Background work with DATA_SOURCE=supabase needs SUPABASE_URL and SUPABASE_SECRET_KEY.");
+  const unavailable = backgroundWorkUnavailable(env);
+  if (unavailable || !url || !secretKey) throw new Error(unavailable);
   const admin = createClient<Database>(url, secretKey, { auth: { persistSession: false, autoRefreshToken: false } });
   const authorizations = createSupabaseAmazonAuthorizationStore(admin);
   return { ...base, dataSource: createSupabaseDataSource(admin), authorizations, amazon: amazonClients(authorizations, env) };

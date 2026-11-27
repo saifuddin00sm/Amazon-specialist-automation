@@ -262,9 +262,10 @@ export interface DataSource {
   listAgentRuns(query: AgentRunQuery): Promise<AgentRun[]>;
   getAgentRun(id: string): Promise<AgentRun | undefined>;
   /**
-   * Starts the listing optimizer on a product as `memberId`. Returns the running AgentRun with its
-   * planned steps. Throws AgentRunError when the product already has a run in flight or a listing
-   * proposal waiting for approval.
+   * Starts the listing optimizer on a product as `memberId`. Returns the running AgentRun with no
+   * steps yet: the optimizeListing workflow appends them as it drafts, checks and reviews, then files
+   * it with completeAgentRun. Throws AgentRunError when the product already has a run in flight or a
+   * listing proposal waiting for approval.
    */
   startListingOptimizer(input: StartListingOptimizerInput): Promise<AgentRun>;
   /**
@@ -286,8 +287,9 @@ export interface DataSource {
    */
   startListingCreator(input: StartListingCreatorInput): Promise<AgentRun>;
   /**
-   * Finishes a running agent run and files its output: for the listing optimizer, a proposed
-   * ListingVersion, its Review and a pending Proposal; for the campaign optimizer, a pending
+   * Finishes a running agent run and files its output: for the listing optimizer, its last draft as a
+   * proposed ListingVersion, its last review as the Review and a pending Proposal (flagged "did not
+   * reach target" when that review fell short of its target); for the campaign optimizer, a pending
    * campaign_plan Proposal, unless it found nothing to change; for the campaign strategist, a pending
    * new_campaign Proposal; for the listing creator, a pending new_listing Proposal. Calling it on a
    * finished run returns it as is.

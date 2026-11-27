@@ -5,7 +5,6 @@ import {
   LISTING_LIMITS,
   NewListingBriefSchema,
   ProposalSchema,
-  RubricCriterionSchema,
   attributeLabels,
   autonomyFor,
   canActOnAccount,
@@ -17,7 +16,6 @@ import {
   newListingFactSheet,
   newListingName,
   newListingPath,
-  overallScore,
   parseNewListing,
   planNewListingAttributes,
   uncertifiedClaims,
@@ -32,20 +30,21 @@ import {
   type AuditEvent,
   type ComplianceCheck,
   type ListingCopy,
+  type ListingRubricScores,
   type Member,
   type NewListingAttribute,
   type NewListingBrief,
   type ProductType,
   type Proposal,
   type ReviewReport,
-  type RubricScores,
   type SellerAccount,
   type Workspace,
 } from "@app/core";
+import { LISTING_REVIEW_TARGET, complianceGate, rubricLines, rubricScore } from "@app/agents";
 import { PROMPTS } from "@app/llm";
 import { AgentRunError } from "../data-source";
 import { assertAgentsRunning, fileWithAutonomy, finalStep } from "./autonomy";
-import { standInDraft } from "./listing-optimizer";
+import { standInDraft } from "./stand-in-draft";
 import { scripted, scriptedLlmCalls } from "./model-calls";
 
 /** What a listing creator run reads about one seller account. */
@@ -176,14 +175,18 @@ export function startListingCreatorRun(
       round: 1,
       title: "Reviewer",
       text: [
-        "Scoring the draft against the rubric.",
-        RubricCriterionSchema.options.map((criterion) => `${criterion.replace("_", " ")} ${review.scores[criterion]}/5`).join(" · "),
+        review.gate.passed ? "Compliance gate: passed." : `Compliance gate: shut. ${review.gate.detail}`,
+        ...rubricLines(review.scores),
+        "",
         `Overall ${review.overall}/100. ${review.report.summary}`,
         ...review.report.findings.map((finding) => `Note: ${finding.message}`),
       ].join("\n"),
       scores: review.scores,
       overall: review.overall,
       findings: review.report.findings,
+      summary: review.report.summary,
+      target: LISTING_REVIEW_TARGET,
+      gate: review.gate,
     },
     {
       ...timed(5),
@@ -226,7 +229,16 @@ export function startListingCreatorRun(
         return scripted(PROMPTS.listingAttributes, { facts: brief.facts, copy, attributes }, { changes: step.changes });
       }
       if (step.kind === "review") {
-        return scripted(PROMPTS.listingReview, { facts: brief.facts, draft: copy, checks }, { scores: step.scores, summary: review.report.summary, findings: step.findings });
+        const sheet = newListingFactSheet(brief, attributeLabels(productType));
+        const input = {
+          productType: productType.name,
+          facts: sheet,
+          keywords: [],
+          attributes: drafted.map(({ name: attribute, attribute: { value } }) => ({ label: attribute, value })),
+          draft: standInDraft(EMPTY_LISTING_COPY, copy, sheet),
+          checks,
+        };
+        return scripted(PROMPTS.listingReview, input, { scores: review.scores, summary: review.report.summary, findings: review.modelFindings });
       }
       return undefined;
     }),
@@ -386,35 +398,50 @@ function draftAttribute(name: string, copy: ListingCopy, productType: ProductTyp
   }
 }
 
-/** The reviewer's rubric for a first draft. Accuracy is full marks: the copy says only what the facts say. */
-function reviewDraft(copy: ListingCopy, plan: AttributePlan[], checks: ComplianceCheck[]): { scores: RubricScores; overall: number; report: ReviewReport } {
+/**
+ * The reviewer's scores for a first draft, on the listing rubric, behind the compliance gate.
+ * Grounding is full marks: the copy says only what the facts say.
+ */
+function reviewDraft(
+  copy: ListingCopy,
+  plan: AttributePlan[],
+  checks: ComplianceCheck[],
+): { scores: ListingRubricScores; overall: number; gate: { passed: boolean; detail?: string }; report: ReviewReport; modelFindings: { criterion: "keyword_coverage" | "conversion_copy" | "attributes"; severity: "info" | "warning"; message: string }[] } {
   const keywordBytes = utf8ByteLength(copy.backendKeywords);
-  const scores: RubricScores = {
-    title: copy.title.length >= 60 ? 5 : 4,
-    bullets: copy.bullets.length >= LISTING_LIMITS.bulletMaxCount ? 5 : copy.bullets.length >= 4 ? 4 : 3,
-    description: copy.description.length >= 250 ? 4 : 3,
-    keywords: keywordBytes === 0 ? 2 : keywordBytes < 60 ? 3 : 4,
-    factual_accuracy: 5,
-    compliance: checks.some((check) => check.status === "fail") ? 2 : checks.some((check) => check.status === "warn") ? 4 : 5,
-  };
   const empty = plan.filter(({ status }) => status === "empty").map(({ attribute }) => attribute.label.toLowerCase());
-  const findings: ReviewReport["findings"] = [
-    ...(copy.bullets.length < LISTING_LIMITS.bulletMaxCount
-      ? [{ criterion: "bullets" as const, severity: "info" as const, message: `${copy.bullets.length} of ${LISTING_LIMITS.bulletMaxCount} bullets: the facts don't cover more.` }]
-      : []),
+  const bullets = copy.bullets.length >= LISTING_LIMITS.bulletMaxCount ? 8 : copy.bullets.length >= 4 ? 7 : 5;
+  const scores: ListingRubricScores = {
+    keyword_coverage: keywordBytes === 0 ? 4 : keywordBytes < 60 ? 6 : 8,
+    grounding: 10,
+    conversion_copy: Math.min(10, bullets + (copy.description.length >= 250 ? 2 : 1)),
+    title_structure: copy.title.length >= 60 ? 9 : 7,
+    attributes: empty.length === 0 ? 10 : 8,
+    voice: 9,
+  };
+  const modelFindings = [
     ...(keywordBytes < 60
-      ? [{ criterion: "keywords" as const, severity: "warning" as const, message: "Few search terms beyond the title; more product details would add some." }]
+      ? [{ criterion: "keyword_coverage" as const, severity: "warning" as const, message: "Few search terms beyond the title; more product details would add some." }]
       : []),
-    ...(empty.length > 0 ? [{ criterion: "description" as const, severity: "info" as const, message: `Recommended attributes left empty: ${empty.join(", ")}.` }] : []),
+    ...(copy.bullets.length < LISTING_LIMITS.bulletMaxCount
+      ? [{ criterion: "conversion_copy" as const, severity: "info" as const, message: `${copy.bullets.length} of ${LISTING_LIMITS.bulletMaxCount} bullets: the facts don't cover more.` }]
+      : []),
+    ...(empty.length > 0 ? [{ criterion: "attributes" as const, severity: "info" as const, message: `Recommended attributes left empty: ${empty.join(", ")}.` }] : []),
   ];
-  const overall = overallScore(scores);
+  const gate = complianceGate(checks);
+  const { overall } = rubricScore(scores, gate);
+  const findings: ReviewReport["findings"] = [
+    ...gate.failing.map((check) => ({ criterion: "compliance" as const, severity: "error" as const, message: `${check.label}: ${check.detail ?? "fails."}` })),
+    ...modelFindings,
+  ];
   return {
     scores,
     overall,
+    gate: { passed: gate.passed, ...(gate.detail ? { detail: gate.detail } : {}) },
     report: {
       summary: overall >= 80 ? "Accurate to the facts and within Amazon's limits; ready for a decision." : "Accurate to the facts but thin; more product facts would strengthen it.",
       findings,
     },
+    modelFindings,
   };
 }
 

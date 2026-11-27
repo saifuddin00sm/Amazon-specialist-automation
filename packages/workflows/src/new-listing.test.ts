@@ -64,7 +64,7 @@ function groundedDraft(): PromptOutput<typeof PROMPTS.listingCreate> {
 }
 
 const goodReview: PromptOutput<typeof PROMPTS.listingReview> = {
-  scores: { title: 5, bullets: 4, description: 4, keywords: 4, factual_accuracy: 5, compliance: 5 },
+  scores: { keyword_coverage: 8, grounding: 10, conversion_copy: 8, title_structure: 9, attributes: 9, voice: 9 },
   summary: "Accurate to the facts and within Amazon's limits.",
   findings: [],
 };
@@ -274,7 +274,7 @@ describe("new listings", () => {
     ]);
     expect(draftRun.llmCalls!.map((call) => [call.promptId, call.promptVersion, call.stepId])).toEqual([
       ["listing_writer.create", 2, `${draftRun.id}_draft1`],
-      ["listing_reviewer.review", 1, `${draftRun.id}_review1`],
+      ["listing_reviewer.review", 2, `${draftRun.id}_review1`],
     ]);
   });
 
@@ -291,7 +291,10 @@ describe("new listings", () => {
     // Only what the facts don't fill goes to the writer.
     expect(user).not.toContain('"name": "brand"');
     // The reviewer reads the seller's values with their labels, as the writer did.
-    expect(model.requests[1]!.user).toContain('"attributes.country_of_origin": "Country/Region of Origin: Vietnam"');
+    expect(model.requests[1]!.user).toMatch(/"ref": "attributes.country_of_origin",\s+"fact": "Country\/Region of Origin: Vietnam"/);
+    // And scores on a different model from the writer's, at temperature 0.
+    expect(model.requests[1]).toMatchObject({ model: "claude-sonnet-4-6", temperature: 0 });
+    expect(model.requests[0]!.model).not.toBe(model.requests[1]!.model);
 
     const proposal = (await dataSource.getProposal(filed.proposalId))!;
     const sources = Object.fromEntries(proposal.diff.flatMap((entry) => (entry.path.startsWith("attributes.") ? [[entry.path.slice(11), (entry.after as { source: string }).source]] : [])));
@@ -376,7 +379,7 @@ describe("new listings", () => {
   it("stop when the reviewer still blocks the draft after the last round", async () => {
     const blocking: PromptOutput<typeof PROMPTS.listingReview> = {
       ...goodReview,
-      findings: [{ criterion: "title", severity: "error", message: "The title doesn't say what the product is for." }],
+      findings: [{ criterion: "title_structure", severity: "error", message: "The title doesn't say what the product is for." }],
     };
     const { wizardBrief, draft, dataSource } = await setup({ model: scriptedModel({ review: () => blocking }) });
     const result = await draft(await wizardBrief());

@@ -18,8 +18,8 @@ describe("agentRunGateway", () => {
         dataset.listingVersions.some((version) => version.productId === candidate.id && version.status === "live") &&
         !dataset.proposals.some((proposal) => proposal.target.id === candidate.id && proposal.status === "pending_approval"),
     )!;
+    // The run starts empty; a call made before its step is recorded names no step.
     const run = await dataSource.startListingOptimizer({ productId: product.id, memberId: owner.id });
-    const draftStep = run.steps!.find((step) => step.kind === "draft")!;
     const live = dataset.listingVersions.find((version) => version.productId === product.id && version.status === "live")!;
     const facts = dataset.productFacts.find((candidate) => candidate.productId === product.id)!;
 
@@ -49,13 +49,12 @@ describe("agentRunGateway", () => {
         live,
         findings: [],
       },
-      stepId: draftStep.id,
     });
 
     const logged = (await dataSource.getAgentRun(run.id))!.llmCalls!;
-    expect(logged).toHaveLength(run.llmCalls!.length + 1);
-    expect(logged.at(-1)).toMatchObject({
-      stepId: draftStep.id,
+    expect(logged).toHaveLength(1);
+    expect(logged[0]!.stepId).toBeUndefined();
+    expect(logged[0]).toMatchObject({
       provider: "anthropic",
       promptId: "listing_writer.rewrite",
       promptVersion: 2,

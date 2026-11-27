@@ -1,3 +1,4 @@
+import { createStandInProvider } from "@app/agents";
 import type { DataSource } from "@app/data";
 import { createLlmGateway, type LlmGateway, type LlmProvider } from "@app/llm";
 import { createAnthropicProvider } from "@app/llm/anthropic";
@@ -17,9 +18,21 @@ export function agentRunGateway({ dataSource, provider, runId }: { dataSource: D
 }
 
 let anthropic: LlmProvider | undefined;
+let standIn: LlmProvider | undefined;
 
-/** One Anthropic provider per process. The SDK reads ANTHROPIC_API_KEY on first use. */
-export function llmProvider(): LlmProvider {
+/** Long enough that the run viewer shows each step arrive. */
+const STAND_IN_LATENCY_MS = 700;
+
+/**
+ * One provider per process: Anthropic, whose SDK reads ANTHROPIC_API_KEY on first use, or with
+ * LLM_PROVIDER=stand-in the stand-in that answers in code and calls no model (the e2e, local
+ * development without a key). Its calls are logged as scripted, and the run viewer says so.
+ */
+export function llmProvider(env: NodeJS.ProcessEnv = process.env): LlmProvider {
+  if (env.LLM_PROVIDER === "stand-in") {
+    standIn ??= createStandInProvider({ latencyMs: STAND_IN_LATENCY_MS });
+    return standIn;
+  }
   anthropic ??= createAnthropicProvider();
   return anthropic;
 }

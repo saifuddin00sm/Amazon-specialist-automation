@@ -17,6 +17,7 @@ import {
 import {
   EMPTY_LISTING_COPY,
   LISTING_COPY_ATTRIBUTES,
+  LISTING_COPY_ATTRIBUTE_NAMES,
   attributeLabels,
   checkDraftGrounding,
   checkLine,
@@ -26,7 +27,6 @@ import {
   newListingFactSheet,
   newListingName,
   newListingSku,
-  overallScore,
   parseNewListing,
   planNewListingAttributes,
   uncertifiedClaims,
@@ -35,9 +35,10 @@ import {
   type AgentRunStep,
   type AttributeValue,
   type ComplianceCheck,
+  type FactSheetEntry,
   type ListingCopy,
+  type ListingDraft,
   type ListingSubmission,
-  type LlmCall,
   type MissingFact,
   type NewListingAttribute,
   type NewListingBrief,
@@ -45,16 +46,17 @@ import {
   type ProductTypeAttribute,
   type ProposalStatus,
   type ReviewReport,
-  type RubricScores,
   type SellerAccount,
   type Violation,
 } from "@app/core";
+import { reviewListing, type ListingReview } from "@app/agents";
 import { ProposalWriteError } from "@app/data";
-import { PROMPTS, createLlmGateway, type LlmGateway, type PromptOutput } from "@app/llm";
+import { PROMPTS, type PromptOutput } from "@app/llm";
 import { checkListingCopy, listingLimits, validateAttributes } from "@app/rules";
 import type { RunStep } from "./catalog-sync";
 import { proposalDecided } from "./client";
 import type { NewListingDeps } from "./deps";
+import { bufferedGateway, recordStepless, violationCheck, type Generated } from "./model-steps";
 
 /**
  * New listings, from a New listing wizard brief to a listing on Amazon, in three Inngest functions
@@ -116,14 +118,16 @@ type Draft = {
   missing: MissingFact[];
   /** True when no check fails. */
   passed: boolean;
-  /** The facts by ref, labelled as the writer saw them, for the reviewer. */
-  facts: Record<string, string>;
+  /** The product type, and the facts by ref labelled as the writer saw them, for the reviewer. */
+  productType: string;
+  sheet: FactSheetEntry[];
+  /** The facts each claim in the copy cites. */
+  claims: ListingDraft["claims"];
+  /** The attributes the agent drafted, by label, for the reviewer. */
+  drafted: { label: string; value: AttributeValue }[];
 };
 
-/** A model call's answer, with the calls it took, kept as a step's result until it is recorded. */
-type Generated<O> = { output: O; calls: LlmCall[]; startedAt: string; finishedAt: string };
-
-type Review = { scores: RubricScores; overall: number; summary: string; findings: Finding[] };
+type Review = Omit<ListingReview, "calls">;
 
 /** Drafts a new listing from a wizard brief and files it for approval. */
 export async function draftNewListing(deps: NewListingDeps, request: NewListingRequest, { run, sendEvent }: NewListingTools): Promise<DraftOutcome> {
@@ -190,7 +194,8 @@ export async function draftNewListing(deps: NewListingDeps, request: NewListingR
     const scored = await run(`review round ${round}`, () => reviewDraft(deps, { runId, draft: draft! }));
     review = await run(`record review round ${round}`, () => recordReview(deps, { runId, round, scored }));
     if (draft.passed && blockingFindings(review).length === 0) break;
-    findings = [...failingChecks(draft.checks), ...review.findings.filter((finding) => finding.severity !== "info")];
+    // The failing checks come first: the reviewer puts the compliance gate ahead of its own findings.
+    findings = review.fixes;
   }
   if (!draft) throw new Error("No draft round ran.");
   if (draft.missing.length > 0) {
@@ -544,21 +549,30 @@ async function checkDraft(
     checks,
     missing,
     passed: !checks.some((check) => check.status === "fail"),
-    facts: Object.fromEntries(sheet.map((entry) => [entry.ref, entry.fact])),
+    productType: productType.name,
+    sheet,
+    claims: output.claims,
+    drafted: attributes.flatMap(({ name, attribute }) =>
+      attribute.source === "agent" && !LISTING_COPY_ATTRIBUTE_NAMES.has(name) ? [{ label: attributeLabels(productType)[name] ?? name, value: attribute.value }] : [],
+    ),
   };
 }
 
-/** The reviewer scores a draft against the rubric, with the checks it got. Records nothing. */
-async function reviewDraft(deps: NewListingDeps, { runId, draft }: { runId: string; draft: Draft }): Promise<Generated<PromptOutput<typeof PROMPTS.listingReview>>> {
+/** The listing reviewer scores a draft against the rubric, behind the compliance gate its checks decide. Records nothing. */
+async function reviewDraft(deps: NewListingDeps, { runId, draft }: { runId: string; draft: Draft }): Promise<Generated<Review>> {
   const startedAt = deps.now().toISOString();
   const { gateway, calls } = bufferedGateway(deps);
   try {
-    const { output } = await gateway.generate({
-      prompt: PROMPTS.listingReview,
-      input: { facts: draft.facts, draft: draft.listing, checks: draft.checks },
+    const { calls: made, ...output } = await reviewListing(gateway, {
+      productType: draft.productType,
+      facts: draft.sheet,
+      keywords: [],
+      attributes: draft.drafted,
+      draft: { listing: draft.listing, claims: draft.claims },
+      checks: draft.checks,
       stepId: `${runId}_review${draft.round}`,
     });
-    return { output, calls, startedAt, finishedAt: deps.now().toISOString() };
+    return { output, calls: made, startedAt, finishedAt: deps.now().toISOString() };
   } catch (error) {
     await recordStepless(deps, runId, calls);
     throw error;
@@ -566,12 +580,8 @@ async function reviewDraft(deps: NewListingDeps, { runId, draft }: { runId: stri
 }
 
 /** Records a review, with the model calls behind it, in one write. */
-async function recordReview(
-  deps: NewListingDeps,
-  { runId, round, scored }: { runId: string; round: number; scored: Generated<PromptOutput<typeof PROMPTS.listingReview>> },
-): Promise<Review> {
+async function recordReview(deps: NewListingDeps, { runId, round, scored }: { runId: string; round: number; scored: Generated<Review> }): Promise<Review> {
   const { output } = scored;
-  const overall = overallScore(output.scores);
   await deps.dataSource.appendAgentRunSteps({
     runId,
     steps: [
@@ -581,17 +591,20 @@ async function recordReview(
         agent: "listing_reviewer",
         round,
         title: round === 1 ? "Reviewer" : `Reviewer round ${round}`,
-        text: [`Overall ${overall}/100. ${output.summary}`, ...output.findings.map((finding) => `${finding.severity === "error" ? "Fix" : "Note"}: ${finding.message}`)].join("\n"),
+        text: output.report,
         scores: output.scores,
-        overall,
+        overall: output.overall,
         findings: output.findings,
+        summary: output.summary,
+        target: output.target,
+        gate: output.gate,
         startedAt: scored.startedAt,
         finishedAt: scored.finishedAt,
       },
     ],
     llmCalls: scored.calls,
   });
-  return { scores: output.scores, overall, summary: output.summary, findings: output.findings };
+  return output;
 }
 
 function blockingFindings(review: Review): Finding[] {
@@ -678,14 +691,6 @@ function putAttributes(
   }).attributes;
 }
 
-function violationCheck(id: string, label: string, violations: readonly Violation[]): ComplianceCheck {
-  const errors = violations.filter((violation) => violation.severity === "error");
-  const warnings = violations.filter((violation) => violation.severity === "warning");
-  if (errors.length > 0) return { id, label, status: "fail", detail: errors.map((violation) => violation.message).join(" ") };
-  if (warnings.length > 0) return { id, label, status: "warn", detail: warnings.map((violation) => violation.message).join(" ") };
-  return { id, label, status: "pass" };
-}
-
 /** Failing checks as findings the next draft must fix. */
 function failingChecks(checks: readonly ComplianceCheck[]): Finding[] {
   return checks
@@ -721,36 +726,16 @@ async function note(deps: NewListingDeps, runId: string, slug: string, title: st
   await deps.dataSource.appendAgentRunSteps({ runId, steps: [step] });
 }
 
-/** Logs calls whose step never came to be: they happened, and were paid for, all the same. */
-async function recordStepless(deps: NewListingDeps, runId: string, calls: readonly LlmCall[]): Promise<void> {
-  if (calls.length === 0) return;
-  const stepless = calls.map((call) => {
-    const copy = { ...call };
-    delete copy.stepId;
-    return copy;
-  });
-  await deps.dataSource.recordLlmCalls({ runId, calls: stepless });
-}
-
-/**
- * A gateway whose calls are kept until their step is on the run: the run only takes calls that name
- * one of its steps, and a step is recorded once its work is done.
- */
-function bufferedGateway(deps: NewListingDeps): { gateway: LlmGateway; calls: LlmCall[] } {
-  const calls: LlmCall[] = [];
-  return { gateway: createLlmGateway({ provider: deps.llm(), record: (call) => void calls.push(call) }), calls };
-}
-
-async function sellerAccount(deps: NewListingDeps, sellerAccountId: string): Promise<SellerAccount> {
+async function sellerAccount(deps: Pick<NewListingDeps, "dataSource">, sellerAccountId: string): Promise<SellerAccount> {
   const account = await deps.dataSource.getSellerAccount(sellerAccountId);
   if (!account) throw new Error("That seller account no longer exists.");
   return account;
 }
 
-type Seller = { sellerId: string; marketplaceId: string; languageTag: string; amazon: ReturnType<NewListingDeps["amazon"]> };
+export type Seller = { sellerId: string; marketplaceId: string; languageTag: string; amazon: ReturnType<NewListingDeps["amazon"]> };
 
 /** The seller behind an account, and where on Amazon it sells. */
-async function seller(deps: NewListingDeps, sellerAccountId: string): Promise<Seller> {
+export async function seller(deps: Pick<NewListingDeps, "dataSource" | "amazon">, sellerAccountId: string): Promise<Seller> {
   const account = await sellerAccount(deps, sellerAccountId);
   return {
     sellerId: account.sellerId,
@@ -763,19 +748,26 @@ async function seller(deps: NewListingDeps, sellerAccountId: string): Promise<Se
 type LoadedSchema = { schema: JsonSchema; productType: ProductType; version: string };
 
 /** Schemas read so far, by deps: a version never changes, so each is downloaded once per process. */
-const loadedSchemas = new WeakMap<NewListingDeps, Map<string, LoadedSchema>>();
+const loadedSchemas = new WeakMap<Pick<NewListingDeps, "productTypeSchema">, Map<string, LoadedSchema>>();
 /** Schemas can run to megabytes; keep the most recent few. */
 const SCHEMAS_KEPT = 20;
 
 /**
  * A product type's schema in the seller's marketplace, read into the attributes the wizard asks for:
  * the latest, or `version` once a run has pinned one. Schemas stay out of step results (they can run
- * to megabytes), so each step reads them here, from Amazon once per version.
+ * to megabytes), so each step reads them here, from Amazon once per version. A new listing's
+ * requirements by default; a listing update asks for "LISTING".
  */
-async function productTypeSchema(deps: NewListingDeps, where: Seller, name: string, version?: string): Promise<LoadedSchema> {
+export async function productTypeSchema(
+  deps: Pick<NewListingDeps, "productTypeSchema">,
+  where: Seller,
+  name: string,
+  version?: string,
+  requirements: "LISTING" | typeof NEW_LISTING_REQUIREMENTS = NEW_LISTING_REQUIREMENTS,
+): Promise<LoadedSchema> {
   let cache = loadedSchemas.get(deps);
   if (!cache) loadedSchemas.set(deps, (cache = new Map()));
-  const key = (at: string) => `${where.marketplaceId}|${name}|${at}`;
+  const key = (at: string) => `${where.marketplaceId}|${name}|${requirements}|${at}`;
   const cached = version ? cache.get(key(version)) : undefined;
   if (cached) return cached;
 
@@ -783,7 +775,7 @@ async function productTypeSchema(deps: NewListingDeps, where: Seller, name: stri
     sellerId: where.sellerId,
     productType: name,
     marketplaceIds: [where.marketplaceId],
-    requirements: NEW_LISTING_REQUIREMENTS,
+    requirements,
     locale: where.languageTag,
     ...(version ? { productTypeVersion: version } : {}),
   });

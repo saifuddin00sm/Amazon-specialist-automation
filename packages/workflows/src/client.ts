@@ -17,6 +17,14 @@ export const newListingRequested = eventType("listing/new.requested", {
 });
 
 /**
+ * A member started the listing optimizer on a product (DataSource.startListingOptimizer made the
+ * run). Starts the optimizeListing workflow, which fills that run in.
+ */
+export const listingOptimizeRequested = eventType("listing/optimize.requested", {
+  schema: z.object({ runId: z.string().min(1), productId: z.string().min(1) }),
+});
+
+/**
  * A member (or autonomy) decided a proposal. Sent after the decision is saved; workflows waiting on a
  * proposal read its status again rather than trust this.
  */
