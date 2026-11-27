@@ -24,15 +24,21 @@ const NO_CALLS: LlmCall[] = [];
 /**
  * Replays an AgentRun's steps as a vertical timeline, streaming each step's text the way the agent
  * produced it. `autoPlay` starts from the first step; otherwise the finished timeline shows at once.
+ * `live` follows a run a workflow is still taking: new steps play as they arrive, and playback only
+ * ends once the run has finished. `stalled` marks a run still marked running that nothing is taking.
  */
 export function AgentRunViewer({
   run,
   autoPlay = false,
+  live = false,
+  stalled = false,
   onPlaybackEnd,
 }: {
   run: AgentRun;
   autoPlay?: boolean;
-  /** Called once, the first time playback reaches the end. */
+  live?: boolean;
+  stalled?: boolean;
+  /** Called once, the first time playback reaches the end (of a live run, once it has finished). */
   onPlaybackEnd?: () => void;
 }) {
   const steps = run.steps ?? NO_STEPS;
@@ -44,22 +50,27 @@ export function AgentRunViewer({
   );
   const reducedMotion = useSyncExternalStore(subscribeReducedMotion, prefersReducedMotion, () => false);
   const ended = useRef(false);
+  // Whether this viewer played the run from the start, as it was when it opened: a live run stops
+  // running before its playback ends.
+  const [autoPlayed] = useState(autoPlay);
+  // Still taking steps: playback waits at the end for the next one.
+  const following = live && !stalled && run.status === "running";
 
   useEffect(() => {
     if (!playback.playing) return;
     const timer = window.setInterval(() => {
-      setPlayback((current) => advance(current, steps, reducedMotion));
+      setPlayback((current) => advance(current, steps, reducedMotion, following));
     }, TICK_MS);
     return () => window.clearInterval(timer);
-  }, [playback.playing, steps, reducedMotion]);
+  }, [playback.playing, steps, reducedMotion, following]);
 
   const done = playback.step >= steps.length;
   useEffect(() => {
-    if (done && autoPlay && !ended.current) {
+    if (done && autoPlayed && !following && !ended.current) {
       ended.current = true;
       onPlaybackEnd?.();
     }
-  }, [done, autoPlay, onPlaybackEnd]);
+  }, [done, autoPlayed, following, onPlaybackEnd]);
 
   const current = steps[playback.step];
 
@@ -82,16 +93,18 @@ export function AgentRunViewer({
             )}
           </p>
         </div>
-        <RunStatusBadge run={run} playing={!done} />
+        <RunStatusBadge run={run} playing={!done && !following} stalled={stalled} />
         <AIGeneratedBadge actor={{ type: "agent", agent: run.agent, agentRunId: run.id }} />
         <div className="ml-auto flex items-center gap-1">
           {!done ? (
-            <Button size="sm" variant="ghost" onClick={() => setPlayback({ step: steps.length, chars: 0, dwell: 0, playing: false })}>
+            // On a live run, skipping catches up and keeps following.
+            <Button size="sm" variant="ghost" onClick={() => setPlayback({ step: steps.length, chars: 0, dwell: 0, playing: following })}>
               <FastForward />
               Skip
             </Button>
           ) : (
-            steps.length > 0 && (
+            steps.length > 0 &&
+            !following && (
               <Button size="sm" variant="ghost" onClick={() => setPlayback({ step: 0, chars: 0, dwell: 0, playing: true })}>
                 <RotateCcw />
                 Replay
@@ -102,10 +115,10 @@ export function AgentRunViewer({
       </header>
 
       <p className="sr-only" aria-live="polite">
-        {done ? "Run replay finished." : current ? `${current.title} in progress.` : ""}
+        {following && done ? "Waiting for the agent's next step." : done ? "Run replay finished." : current ? `${current.title} in progress.` : ""}
       </p>
 
-      {steps.length === 0 ? (
+      {steps.length === 0 && !following ? (
         <p className="text-sm text-muted-foreground">{run.summary || "This run didn't record a timeline."}</p>
       ) : (
         <ol className="flex flex-col">
@@ -143,6 +156,12 @@ export function AgentRunViewer({
               </li>
             );
           })}
+          {following && done && (
+            <li className="relative flex gap-3" data-testid="run-waiting">
+              <StepIcon state="active" />
+              <span className="pt-1 text-sm text-muted-foreground">{steps.length === 0 ? "Starting the run…" : "Working on the next step…"}</span>
+            </li>
+          )}
         </ol>
       )}
 
@@ -156,16 +175,17 @@ export function AgentRunViewer({
   );
 }
 
-function advance(current: Playback, steps: AgentRunStep[], reducedMotion: boolean): Playback {
+function advance(current: Playback, steps: AgentRunStep[], reducedMotion: boolean, following: boolean): Playback {
   const step = steps[current.step];
-  if (!step) return { ...current, playing: false };
+  // Caught up with a run still taking steps: wait (the same state, so nothing renders) for the next.
+  if (!step) return following ? current : { ...current, playing: false };
   if (current.chars < step.text.length) {
     // Reduced motion shows each step whole instead of streaming it.
     return { ...current, chars: reducedMotion ? step.text.length : current.chars + CHARS_PER_TICK };
   }
   if (current.dwell < DWELL_TICKS) return { ...current, dwell: current.dwell + 1 };
   const next = current.step + 1;
-  return { step: next, chars: 0, dwell: 0, playing: next < steps.length };
+  return { step: next, chars: 0, dwell: 0, playing: next < steps.length || following };
 }
 
 function StepIcon({ state }: { state: "done" | "active" | "pending" }) {
@@ -196,7 +216,7 @@ function StepOutcome({ step, run }: { step: AgentRunStep; run: AgentRun }) {
           variant="outline"
           className={cn(
             "tabular-nums",
-            step.overall >= 80
+            step.overall >= (step.target ?? 80)
               ? "border-emerald-500/40 text-emerald-700 dark:text-emerald-300"
               : "border-amber-500/40 text-amber-700 dark:text-amber-300",
           )}
@@ -292,11 +312,17 @@ function LlmCalls({ calls }: { calls: LlmCall[] }) {
   );
 }
 
-function RunStatusBadge({ run, playing }: { run: AgentRun; playing: boolean }) {
+function RunStatusBadge({ run, playing, stalled }: { run: AgentRun; playing: boolean; stalled: boolean }) {
   if (playing) return <Badge variant="secondary">Replaying</Badge>;
   switch (run.status) {
     case "running":
-      return <Badge variant="secondary">Running</Badge>;
+      return stalled ? (
+        <Badge variant="outline" className="border-amber-500/40 text-amber-700 dark:text-amber-300">
+          Not responding
+        </Badge>
+      ) : (
+        <Badge variant="secondary">Running</Badge>
+      );
     case "succeeded":
       return (
         <Badge variant="outline" className="border-emerald-500/40 text-emerald-700 dark:text-emerald-300">

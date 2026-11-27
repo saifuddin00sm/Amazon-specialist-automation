@@ -30,5 +30,9 @@ export default defineConfig({
     url: `http://localhost:${PORT}/approvals`,
     timeout: 180_000,
     reuseExistingServer: !process.env.CI,
+    // The specs write to the in-memory mock, whatever .env.local picks. Workflows run in the
+    // server's process instead of through Inngest, on the stand-in model, so agent runs are real
+    // runs without a dev server, an API key, or a model call.
+    env: { DATA_SOURCE: "mock", WORKFLOWS_INLINE: "1", LLM_PROVIDER: "stand-in" },
   },
 });

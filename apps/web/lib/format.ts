@@ -5,7 +5,7 @@ import type {
   FreshnessSource,
   ProposalRisk,
   ProposalType,
-  RubricCriterion,
+  ReviewCriterion,
   Target,
 } from "@app/core";
 
@@ -99,7 +99,14 @@ export const CAMPAIGN_TYPE_LABELS: Record<CampaignType, string> = {
 
 export const RISK_LABELS: Record<ProposalRisk, string> = { low: "Low risk", medium: "Medium risk", high: "High risk" };
 
-export const RUBRIC_LABELS: Record<RubricCriterion, string> = {
+export const RUBRIC_LABELS: Record<ReviewCriterion, string> = {
+  keyword_coverage: "Keyword coverage",
+  grounding: "Grounding",
+  conversion_copy: "Conversion copy",
+  title_structure: "Title structure",
+  attributes: "Attributes",
+  voice: "Voice",
+  // Reviews written before the listing rubric.
   title: "Title",
   bullets: "Bullets",
   description: "Description",

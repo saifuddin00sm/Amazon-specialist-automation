@@ -8,7 +8,7 @@ import { AIGeneratedBadge } from "@/components/ai-generated-badge";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { PROPOSAL_TYPE_LABELS, formatDateTime } from "@/lib/format";
-import { RiskBadge } from "./risk-badge";
+import { MissedTargetBadge, RiskBadge } from "./risk-badge";
 
 export function ProposalList({
   items,
@@ -53,6 +53,7 @@ export function ProposalList({
               <span className="flex flex-wrap items-center gap-1.5">
                 <Badge variant="secondary">{PROPOSAL_TYPE_LABELS[proposal.type]}</Badge>
                 <RiskBadge risk={proposal.risk} />
+                <MissedTargetBadge scores={proposal.scores} />
                 <AIGeneratedBadge actor={proposal.createdBy} compact />
                 {hasBlockingFailure(item.compliance) && (
                   <span className="inline-flex items-center gap-1 text-xs font-medium text-destructive">

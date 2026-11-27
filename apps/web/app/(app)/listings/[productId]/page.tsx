@@ -1,4 +1,5 @@
 import { canActOnAccount, type ListingVersion, type ProductFacts } from "@app/core";
+import { listingOptimizerRunStalled } from "@app/workflows";
 import { ArrowLeft } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
@@ -11,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getDataSource } from "@/lib/data";
 import { formatDateTime, formatMoney } from "@/lib/format";
+import { runOutcome } from "@/lib/runs";
 
 export const metadata: Metadata = { title: "Product" };
 
@@ -47,6 +49,12 @@ async function ProductView({ params }: { params: PageProps<"/listings/[productId
   ]);
   const live = versions.find((version) => version.status === "live");
   const pendingProposal = pending.find((proposal) => proposal.target.id === product.id);
+  // How the latest run ended, for the panel to announce when it finishes while you watch.
+  const latestRun = runs[0];
+  const filed = latestRun?.proposalIds[0] ? await dataSource.getProposal(latestRun.proposalIds[0]) : undefined;
+  const latestOutcome = latestRun && latestRun.status !== "running" ? runOutcome(latestRun, filed) : undefined;
+  // Marked running, but nothing is taking it any more: the panel stops following it.
+  const latestStalled = latestRun ? listingOptimizerRunStalled(latestRun) : false;
 
   return (
     <>
@@ -70,7 +78,9 @@ async function ProductView({ params }: { params: PageProps<"/listings/[productId
         </h2>
         <OptimizerPanel
           productId={product.id}
-          latestRun={runs[0]}
+          latestRun={latestRun}
+          latestOutcome={latestOutcome}
+          latestStalled={latestStalled}
           pendingProposalId={pendingProposal?.id}
           agentsPaused={workspace?.agentsPausedAt !== undefined}
           canRun={Boolean(

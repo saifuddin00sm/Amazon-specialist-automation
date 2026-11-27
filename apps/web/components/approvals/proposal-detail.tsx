@@ -34,7 +34,7 @@ import { DiffView } from "./diff-view";
 import { ProposalEditor } from "./proposal-editor";
 import { RejectForm } from "./reject-form";
 import { ComplianceResults, DataFreshnessPanel, ReviewerReport, RubricBreakdown, Section } from "./review-panels";
-import { RiskBadge } from "./risk-badge";
+import { MissedTargetBadge, RiskBadge } from "./risk-badge";
 
 export type DetailMode = "view" | "edit" | "reject";
 
@@ -103,6 +103,7 @@ export function ProposalDetail({
         <div className="flex flex-wrap items-center gap-1.5">
           <Badge variant="secondary">{PROPOSAL_TYPE_LABELS[proposal.type]}</Badge>
           <RiskBadge risk={proposal.risk} />
+          <MissedTargetBadge scores={proposal.scores} />
           <Badge variant="outline">
             {account.name} · {account.autonomyLevel}
           </Badge>
@@ -120,7 +121,7 @@ export function ProposalDetail({
         <dl className="flex flex-wrap gap-x-6 gap-y-1 text-sm">
           <Score label="Confidence" value={proposal.scores.confidence} />
           <Score label="Impact" value={proposal.scores.impact} />
-          {proposal.scores.rubric !== undefined && <Score label="Rubric" value={proposal.scores.rubric} />}
+          {proposal.scores.rubric !== undefined && <Score label="Rubric" value={proposal.scores.rubric} of={proposal.scores.rubricTarget} />}
         </dl>
         {item.snoozed && proposal.snoozedUntil && (
           <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
@@ -235,7 +236,7 @@ export function ProposalDetail({
 
       {review ? (
         <div className="grid gap-4 xl:grid-cols-2">
-          <RubricBreakdown review={review} />
+          <RubricBreakdown review={review} target={proposal.scores.rubricTarget} />
           <ReviewerReport review={review} />
         </div>
       ) : (
@@ -262,11 +263,14 @@ export function ProposalDetail({
   );
 }
 
-function Score({ label, value }: { label: string; value: number }) {
+function Score({ label, value, of }: { label: string; value: number; /** The target it was scored against. */ of?: number }) {
   return (
     <div className="flex items-baseline gap-1.5">
       <dt className="text-muted-foreground">{label}</dt>
-      <dd className="font-medium tabular-nums">{value}</dd>
+      <dd className="font-medium tabular-nums">
+        {value}
+        {of !== undefined && <span className="font-normal text-muted-foreground"> / target {of}</span>}
+      </dd>
     </div>
   );
 }

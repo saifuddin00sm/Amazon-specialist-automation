@@ -1,7 +1,9 @@
 import {
   FRESHNESS_MAX_AGE_HOURS,
+  ListingRubricCriterionSchema,
   RubricCriterionSchema,
   freshnessAgeHours,
+  isListingRubricScores,
   isStale,
   type ComplianceCheck,
   type DataFreshness,
@@ -32,31 +34,35 @@ export function Section({
   );
 }
 
-export function RubricBreakdown({ review }: { review: Review }) {
+/**
+ * The review's overall and each criterion's score: the listing rubric's 0–10, or the 1–5 criteria of
+ * reviews written before it. `target` is the score the reviewer's loop aimed for, when it had one.
+ */
+export function RubricBreakdown({ review, target }: { review: Review; target?: number }) {
+  const { scores } = review;
+  const rows = isListingRubricScores(scores)
+    ? ListingRubricCriterionSchema.options.map((criterion) => ({ criterion, score: scores[criterion], max: 10 }))
+    : RubricCriterionSchema.options.map((criterion) => ({ criterion, score: scores[criterion], max: 5 }));
   return (
     <Section title="Rubric" aside={<AIGeneratedBadge actor={review.reviewer} />} aria-label="Rubric breakdown">
-      <div className="flex items-baseline gap-2">
-        <span className={cn("text-3xl font-semibold tabular-nums", scoreTone(review.overall))}>{review.overall}</span>
-        <span className="text-sm text-muted-foreground">/ 100 overall</span>
+      <div className="flex flex-wrap items-baseline gap-2">
+        <span className={cn("text-3xl font-semibold tabular-nums", scoreTone(review.overall, target))}>{review.overall}</span>
+        <span className="text-sm text-muted-foreground">/ 100 overall{target !== undefined && ` · target ${target}`}</span>
       </div>
       <dl className="grid gap-2">
-        {RubricCriterionSchema.options.map((criterion) => {
-          const score = review.scores[criterion];
-          return (
-            <div key={criterion} className="grid grid-cols-[8rem_1fr_2.5rem] items-center gap-3 text-sm">
-              <dt className="text-muted-foreground">{RUBRIC_LABELS[criterion]}</dt>
-              <dd className="flex gap-1" aria-hidden>
-                {[1, 2, 3, 4, 5].map((step) => (
-                  <span
-                    key={step}
-                    className={cn("h-2 flex-1 rounded-full", step <= score ? barTone(score) : "bg-muted")}
-                  />
-                ))}
-              </dd>
-              <dd className="text-right font-medium tabular-nums">{score}/5</dd>
-            </div>
-          );
-        })}
+        {rows.map(({ criterion, score, max }) => (
+          <div key={criterion} className="grid grid-cols-[8rem_1fr_2.5rem] items-center gap-3 text-sm">
+            <dt className="text-muted-foreground">{RUBRIC_LABELS[criterion]}</dt>
+            <dd className="flex gap-0.5" aria-hidden>
+              {Array.from({ length: max }, (_, i) => (
+                <span key={i} className={cn("h-2 flex-1 rounded-full", i < score ? barTone(score / max) : "bg-muted")} />
+              ))}
+            </dd>
+            <dd className="text-right font-medium tabular-nums">
+              {score}/{max}
+            </dd>
+          </div>
+        ))}
       </dl>
     </Section>
   );
@@ -177,10 +183,11 @@ function severityRank(severity: FindingSeverity): number {
   return { info: 0, warning: 1, error: 2 }[severity];
 }
 
-function scoreTone(overall: number): string {
-  return overall >= 80 ? "text-emerald-600 dark:text-emerald-400" : overall >= 60 ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400";
+function scoreTone(overall: number, target = 80): string {
+  return overall >= target ? "text-emerald-600 dark:text-emerald-400" : overall >= 60 ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400";
 }
 
-function barTone(score: number): string {
-  return score >= 4 ? "bg-emerald-500" : score === 3 ? "bg-amber-500" : "bg-red-500";
+/** By the share of the criterion's top score: 4 of 5 and 8 of 10 are strong, 3 of 5 and 6 of 10 middling. */
+function barTone(share: number): string {
+  return share >= 0.8 ? "bg-emerald-500" : share >= 0.6 ? "bg-amber-500" : "bg-red-500";
 }
