@@ -55,4 +55,10 @@ describe("routes", () => {
   it("route every task to a priced model", () => {
     for (const task of LlmTaskSchema.options) expect(MODEL_PRICES[ROUTES[task].model], task).toBeDefined();
   });
+
+  it("send drafts to a different model from the one that wrote them, at temperature 0", () => {
+    expect(ROUTES.listing_review.model).not.toBe(ROUTES.listing_rewrite.model);
+    expect(ROUTES.listing_review.model).not.toBe(ROUTES.listing_create.model);
+    expect(ROUTES.listing_review.temperature).toBe(0);
+  });
 });

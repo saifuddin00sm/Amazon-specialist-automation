@@ -15,7 +15,7 @@ export function createAnthropicProvider({ client = new Anthropic() }: { client?:
       trainsOnInputs: false,
       basis: "Anthropic's commercial terms: API inputs and outputs aren't used to train models.",
     },
-    async complete({ model, system, user, maxTokens, effort, output }): Promise<Completion> {
+    async complete({ model, system, user, maxTokens, effort, temperature, output }): Promise<Completion> {
       let response: Anthropic.Message;
       try {
         response = await client.messages.create({
@@ -24,6 +24,8 @@ export function createAnthropicProvider({ client = new Anthropic() }: { client?:
           // A prompt version's system text never changes, so it caches across calls once it is long enough to.
           system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
           messages: [{ role: "user", content: user }],
+          // Only on routes that pin it: the current models refuse any temperature but their default.
+          ...(temperature !== undefined ? { temperature } : {}),
           output_config: { effort, format: zodOutputFormat(output) },
         });
       } catch (error) {

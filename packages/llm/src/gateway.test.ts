@@ -70,6 +70,7 @@ describe("createLlmGateway", () => {
         system: "Write a title.",
         user: 'Product: Bowl\nFacts: {\n  "color": "Teal"\n}',
         output: prompt.output,
+        prompt: { id: prompt.id, version: prompt.version, task: prompt.task, input: { name: "Bowl", facts: { color: "Teal" } } },
       },
     ]);
     expect(calls).toEqual(recorded);
@@ -157,6 +158,15 @@ describe("createLlmGateway", () => {
     await gateway.generate(request);
     // 1,000 × $2 + 500 × $10 + 2,000 × $0.20 per million.
     expect(recorded[0]).toMatchObject({ model: "claude-sonnet-5-5", costUsd: 0.0074 });
+  });
+
+  it("pins the temperature on routes that set one, and leaves it to the model otherwise", async () => {
+    const { provider, requests } = fakeProvider([{ text: '{"title":"Teal Bowl"}' }, { text: '{"title":"Teal Bowl"}' }]);
+    const routes = { ...ROUTES, listing_rewrite: { model: "claude-sonnet-4-6", effort: "low" as const, maxTokens: 1_000, temperature: 0 } };
+    await createLlmGateway({ provider, record: () => {}, routes }).generate(request);
+    await createLlmGateway({ provider, record: () => {} }).generate(request);
+    expect(requests[0]).toMatchObject({ model: "claude-sonnet-4-6", temperature: 0 });
+    expect(requests[1]).not.toHaveProperty("temperature");
   });
 
   it("waits for each call to be logged before going on", async () => {

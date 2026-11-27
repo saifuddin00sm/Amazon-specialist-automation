@@ -3,6 +3,7 @@
   "campaign_strategist.plan@v1": "sha256:49ea9deb9c9e70f3c17f12e5bc6e6965bd60977ad920cf40a5387ee4fd0ef338",
   "listing_creator.attributes@v1": "sha256:2e7b2be723e20dbe138733b6dba318e4e234c85ed30633fd8e275dc066e6a51f",
   "listing_reviewer.review@v1": "sha256:87aeb042b03927c4c3fdbe2d049f5c77a057d22c7d97aac399558517e2f3f7dd",
+  "listing_reviewer.review@v2": "sha256:64f5323b4b0ee8e0ccf776b6f563a469ae45c45112858d65ad7a024e4c063494",
   "listing_writer.create@v1": "sha256:069a7197a6db26e511c1ceebdf49c891dc3f49997e8d3c45d21c238d7936bf7d",
   "listing_writer.create@v2": "sha256:3f43bc274fa17d34e3ec5c56045a8a1bb815cd06e5729682c6e6058152d3afe5",
   "listing_writer.rewrite@v1": "sha256:d4d78a5a3494c8542a29f307779240d3d04eeff530cd324a7f96096c5ec3cc7b",

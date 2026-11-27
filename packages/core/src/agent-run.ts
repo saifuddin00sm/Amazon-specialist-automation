@@ -5,7 +5,7 @@ import { AgentNameSchema, EntityRefSchema, IdSchema, IsoDateTimeSchema } from ".
 import { ComplianceCheckSchema } from "./compliance";
 import { LlmCallSchema } from "./llm";
 import { DiffEntrySchema } from "./proposal";
-import { ReviewReportSchema, RubricScoresSchema } from "./review";
+import { ReviewReportSchema, ReviewScoresSchema } from "./review";
 
 export const AgentRunStatusSchema = z.enum(["queued", "running", "succeeded", "failed", "cancelled"]);
 export type AgentRunStatus = z.infer<typeof AgentRunStatusSchema>;
@@ -30,9 +30,15 @@ export const AgentRunStepSchema = z.discriminatedUnion("kind", [
     kind: z.literal("review"),
     agent: AgentNameSchema,
     round: z.number().int().positive(),
-    scores: RubricScoresSchema,
+    scores: ReviewScoresSchema,
     overall: z.number().int().min(0).max(100),
     findings: ReviewReportSchema.shape.findings,
+    /** The reviewer's one-sentence verdict. */
+    summary: z.string().min(1).optional(),
+    /** The overall a draft needs to be proposed without a flag. */
+    target: z.number().int().min(0).max(100).optional(),
+    /** The compliance gate: a draft that fails it scores 0, whatever the rubric says. */
+    gate: z.object({ passed: z.boolean(), detail: z.string().optional() }).optional(),
   }),
   /** Changes one pass of the campaign optimizer found, as lines of the campaign plan's diff. */
   z.object({ ...StepBase, kind: z.literal("plan"), agent: AgentNameSchema, changes: z.array(DiffEntrySchema) }),
@@ -78,3 +84,20 @@ export const AgentRunSchema = z
     path: ["llmCalls"],
   });
 export type AgentRun = z.infer<typeof AgentRunSchema>;
+
+/**
+ * How long a running run can go without a new step before it counts as stalled: whatever was taking
+ * it is gone (the worker never got it, or stopped). Generous, since a step is a model call with retries.
+ */
+export const AGENT_RUN_STALL_MS = 10 * 60_000;
+
+/** When the run last moved: its latest step's end, or its start. */
+export function lastActivityAt(run: Pick<AgentRun, "startedAt" | "steps">): Date {
+  const last = run.steps?.at(-1)?.finishedAt ?? run.startedAt;
+  return new Date(Math.max(Date.parse(last), Date.parse(run.startedAt)));
+}
+
+/** A run still marked running that hasn't moved in AGENT_RUN_STALL_MS. */
+export function agentRunStalled(run: Pick<AgentRun, "status" | "startedAt" | "steps">, now: Date, afterMs = AGENT_RUN_STALL_MS): boolean {
+  return run.status === "running" && now.getTime() - lastActivityAt(run).getTime() >= afterMs;
+}

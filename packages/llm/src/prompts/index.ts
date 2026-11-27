@@ -3,6 +3,7 @@ import campaignOptimizerPlanV1 from "./campaign-optimizer.plan.v1";
 import campaignStrategistPlanV1 from "./campaign-strategist.plan.v1";
 import listingCreatorAttributesV1 from "./listing-creator.attributes.v1";
 import listingReviewerReviewV1 from "./listing-reviewer.review.v1";
+import listingReviewerReviewV2 from "./listing-reviewer.review.v2";
 import listingWriterCreateV1 from "./listing-writer.create.v1";
 import listingWriterCreateV2 from "./listing-writer.create.v2";
 import listingWriterRewriteV1 from "./listing-writer.rewrite.v1";
@@ -15,7 +16,7 @@ import listingWriterRewriteV2 from "./listing-writer.rewrite.v2";
 export const PROMPTS = {
   listingRewrite: listingWriterRewriteV2,
   listingCreate: listingWriterCreateV2,
-  listingReview: listingReviewerReviewV1,
+  listingReview: listingReviewerReviewV2,
   listingAttributes: listingCreatorAttributesV1,
   campaignOptimize: campaignOptimizerPlanV1,
   campaignStrategy: campaignStrategistPlanV1,
@@ -28,6 +29,7 @@ export const PROMPT_VERSIONS: readonly Prompt[] = [
   listingWriterCreateV1,
   listingWriterCreateV2,
   listingReviewerReviewV1,
+  listingReviewerReviewV2,
   listingCreatorAttributesV1,
   campaignOptimizerPlanV1,
   campaignStrategistPlanV1,

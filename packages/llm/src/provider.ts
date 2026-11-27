@@ -1,4 +1,4 @@
-import type { LlmProviderName } from "@app/core";
+import type { LlmProviderName, LlmTask } from "@app/core";
 import type { z } from "zod";
 import type { TokenUsage } from "./pricing";
 import type { Effort } from "./routing";
@@ -19,8 +19,15 @@ export type CompletionRequest = {
   user: string;
   maxTokens: number;
   effort: Effort;
+  /** Set when the route pins sampling; otherwise the model's default. */
+  temperature?: number;
   /** The prompt's output schema, for providers that can constrain output to it. The gateway validates either way. */
   output: z.ZodType;
+  /**
+   * Which prompt version this is, with its parsed input. A vendor provider sends only `system` and
+   * `user`; a stand-in that answers in code, with no model behind it, reads these instead.
+   */
+  prompt: { id: string; version: number; task: LlmTask; input: unknown };
 };
 
 export type Completion = {

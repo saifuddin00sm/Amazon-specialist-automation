@@ -80,6 +80,7 @@ export function createLlmGateway({
     async generate({ prompt, input, stepId }) {
       const route = routes[prompt.task];
       const { system, user } = renderPrompt(prompt, input);
+      const parsed: unknown = prompt.input.parse(input);
       const calls: LlmCall[] = [];
       let problem: string | undefined;
 
@@ -114,7 +115,9 @@ export function createLlmGateway({
             user: problem ? `${user}\n\n${repairNote(problem)}` : user,
             maxTokens: route.maxTokens,
             effort: route.effort,
+            ...(route.temperature !== undefined ? { temperature: route.temperature } : {}),
             output: prompt.output,
+            prompt: { id: prompt.id, version: prompt.version, task: prompt.task, input: parsed },
           });
         } catch (error) {
           const message = error instanceof LlmProviderError ? error.message : `The ${provider.name} provider failed.`;

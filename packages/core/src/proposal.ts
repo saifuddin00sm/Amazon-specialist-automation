@@ -55,8 +55,15 @@ export const ProposalScoresSchema = z.object({
   impact: z.number().int().min(0).max(100),
   /** Review overall score of the proposed listing, when there is one. */
   rubric: z.number().int().min(0).max(100).optional(),
+  /** The overall the reviewer's loop aimed for. A rubric score below it is flagged "did not reach target". */
+  rubricTarget: z.number().int().min(0).max(100).optional(),
 });
 export type ProposalScores = z.infer<typeof ProposalScoresSchema>;
+
+/** True when the agent filed the proposal without its review reaching the target score. */
+export function missedRubricTarget(scores: ProposalScores): boolean {
+  return scores.rubricTarget !== undefined && (scores.rubric ?? 0) < scores.rubricTarget;
+}
 
 /** Any change to Amazon or to spend. Nothing is applied until a Proposal is approved. */
 export const ProposalSchema = z

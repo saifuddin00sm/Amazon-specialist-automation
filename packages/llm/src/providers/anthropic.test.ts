@@ -5,7 +5,15 @@ import { LlmProviderError } from "../provider";
 import { createAnthropicProvider } from "./anthropic";
 
 const output = z.object({ title: z.string() });
-const request = { model: "claude-opus-5-5", system: "Write a title.", user: "Product: Bowl", maxTokens: 8_000, effort: "medium" as const, output };
+const request = {
+  model: "claude-opus-5-5",
+  system: "Write a title.",
+  user: "Product: Bowl",
+  maxTokens: 8_000,
+  effort: "medium" as const,
+  output,
+  prompt: { id: "listing_writer.rewrite", version: 1, task: "listing_rewrite" as const, input: { name: "Bowl" } },
+};
 
 /** A client whose messages.create answers with `answer`, keeping what it was sent. */
 function stubClient(answer: () => Promise<unknown>) {
@@ -56,6 +64,14 @@ describe("createAnthropicProvider", () => {
       stopReason: "end",
       usage: { inputTokens: 120, outputTokens: 40, cacheReadTokens: 900, cacheWriteTokens: 0 },
     });
+  });
+
+  it("sends a temperature only when the route pins one", async () => {
+    const { client, sent } = stubClient(async () => message());
+    await createAnthropicProvider({ client }).complete({ ...request, model: "claude-sonnet-4-6", temperature: 0 });
+    expect(sent[0]).toMatchObject({ model: "claude-sonnet-4-6", temperature: 0 });
+    // Nothing about the prompt beyond its text reaches the API.
+    expect(Object.keys(sent[0] as object).sort()).toEqual(["max_tokens", "messages", "model", "output_config", "system", "temperature"]);
   });
 
   it("reports refusals and truncated output", async () => {
